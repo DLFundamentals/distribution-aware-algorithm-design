@@ -17,11 +17,49 @@ them locally, or provide them through an anonymous external artifact archive for
 | Candidate Count | Candidate-width ablation | `python -m benchmarks.candidate_count_sweep --max-workers 4` | Starts from scratch |
 | Iteration Count | Iterative synthesis runtime figure | `python -m benchmarks.iteration_count_sweep --max-workers 4` | Starts from scratch |
 | No-Hint Recovery | Hidden-rule framing ablation | `python -m benchmarks.no_hint_recovery_benchmark --source-run-root "$MAIN_SWEEP_ROOT" --max-workers 4` | Needs a completed main benchmark run |
+| LLM-PV Baseline | Propose-and-verify baseline: sample solver programs, select by validation, evaluate on test | `python -m benchmarks.llm_pv_benchmark --source-run-root "$MAIN_SWEEP_ROOT" --attempts 5 --model gpt-5 --reasoning-effort high --max-workers 1` | Reuses datasets from a completed main benchmark run |
 | Graph Relabel Invariance | Graph presentation perturbation ablation | `python -m benchmarks.graph_relabel_invariance_benchmark --source-run-root "$MAIN_SWEEP_ROOT" --max-workers 4` | Needs a completed main benchmark run |
 | PACE 2025 Dominating Set | External PACE diagnostic | `python -m benchmarks.pace2025_dominating_set --track heuristic --test-source private` | Downloads or reads PACE instances; needs LLM API for synthesis |
 
 `$MAIN_SWEEP_ROOT` should point to a completed main benchmark sweep root, for example
 `artifacts/second_scale_benchmark_v2/<sweep_id>`.
+
+## LLM-PV Baseline
+
+`benchmarks.llm_pv_benchmark` adapts LLM-PV to DasBench as a solver-only propose-and-verify
+baseline. For each target it stages `train.jsonl`, `validation.jsonl`, and `test.jsonl` from
+the source sweep into `artifacts/llm_pv_benchmark/<sweep_id>/targets/llm_pv/...`, prompts the
+LLM for `solution.py` candidate programs, evaluates every attempt on train and validation,
+selects the best attempt by validation quality/optimality/runtime, and evaluates only that
+selected solver on test.
+
+Defaults match the reference LLM-PV search shape closely: `--attempts 5` and early stop at
+validation quality `1.0`. `--model` defaults to `OPENAI_MODEL` when set and otherwise
+`gpt-5`; `--reasoning-effort` defaults to `OPENAI_REASONING_EFFORT` when set and otherwise
+`high`. Output is uncapped by default; pass `--max-output-tokens` only when you want to cap
+the combined reasoning and visible output budget. OpenAI requests use a large per-attempt
+timeout by default (`--api-timeout-seconds 14400`) so high-reasoning calls can finish. Code
+interpreter is off by default and can be enabled with `--enable-code-interpreter`. Prompts include
+problem-specific return-shape contracts, but evaluation still uses the normal DasBench solver
+interfaces. The benchmark runs one representative family per problem unless `--all-families` is passed.
+
+Example:
+
+```bash
+python -m benchmarks.llm_pv_benchmark \
+  --source-run-root artifacts/second_scale_benchmark_v2/20260427_230552 \
+  --attempts 5 \
+  --model gpt-5 \
+  --reasoning-effort high \
+  --max-workers 1
+```
+
+Useful lower-cost checks:
+
+```bash
+python -m benchmarks.llm_pv_benchmark --dry-run --problem tsp
+python -m benchmarks.llm_pv_benchmark --problem maxsat --family latent_backdoor_mixture_v1 --attempts 1 --max-workers 1
+```
 
 ## Defaults
 
@@ -53,6 +91,37 @@ python -m scripts.pace2025_run_heuristic_baselines --count 5
 python -m scripts.pace2025_collect_heuristic_report
 ```
 
+To compare PACE 2025 Dominating Set instances against the in-repo MDS heuristics:
+
+```bash
+python -m scripts.pace2025_run_heuristic_baselines \
+  --dasbench-mds-baselines \
+  --source private \
+  --track heuristic \
+  --count 100 \
+  --dasbench-timeout-seconds 300 \
+  --max-workers 5 \
+  --output-dir artifacts/pace2025_dominating_set/baseline_comparisons/dasbench_mds_heuristics
+```
+
+To compare against locally installed PACE heuristic solvers using the wrappers in `baselines/bin/`:
+
+```bash
+python -m scripts.pace2025_run_heuristic_baselines \
+  --solvers fontanf,root,swats,shadoks,aeg,greeduce \
+  --source private \
+  --track heuristic \
+  --count 100 \
+  --timeout-seconds 360 \
+  --grace-seconds 30 \
+  --max-workers 6 \
+  --output-dir artifacts/pace2025_dominating_set/baseline_comparisons/pace_top_heuristics
+```
+
+The solver checkouts live under `baselines/src/pace2025_*`. The longer external timeout gives
+solvers with hardcoded near-competition runtimes enough room to exit normally and write their final
+PACE-format solution.
+
 Local run-management utilities used during development, such as failed-run cleanup, candidate
 removal, tail finishers, diagnostic patchers, and missing-runtime rerunners, are intentionally omitted
 from the submission tree. Their provenance remains in git history.
@@ -66,5 +135,6 @@ python -m benchmarks.sample_size_sweep --validation-size 32 --dry-run --problem 
 python -m benchmarks.problem_size_sweep --dry-run --problem tsp
 python -m benchmarks.candidate_count_sweep --dry-run --problem tsp
 python -m benchmarks.iteration_count_sweep --dry-run --problem tsp
+python -m benchmarks.llm_pv_benchmark --dry-run --problem tsp
 python -m benchmarks.pace2025_dominating_set --help
 ```

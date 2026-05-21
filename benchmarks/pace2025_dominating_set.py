@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import tarfile
 import time
 import urllib.request
@@ -77,15 +78,25 @@ def _instance_paths(
     return [builder(track, index) for index in range(start_index, end_index + 1)]
 
 
-def _download_file(relative_path: str, source_config: SourceConfig) -> Path:
+def _atomic_write_bytes(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        tmp.write_bytes(payload)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _download_file(relative_path: str, source_config: SourceConfig, *, force: bool = False) -> Path:
     target = source_config.cache_dir / relative_path
-    if target.exists():
+    if target.exists() and not force:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     url = f"{PACE_RAW_BASE_URL}/{source_config.github_ref}/{relative_path}"
     with urllib.request.urlopen(url) as response:
         payload = response.read()
-    target.write_bytes(payload)
+    _atomic_write_bytes(target, payload)
     return target
 
 
@@ -98,8 +109,7 @@ def _source_file(relative_path: str, source_config: SourceConfig) -> Path:
     return _download_file(relative_path, source_config)
 
 
-def _read_pace_text(relative_path: str, source_config: SourceConfig) -> str:
-    path = _source_file(relative_path, source_config)
+def _read_pace_text_from_path(path: Path) -> str:
     if path.name.endswith(".tar.xz"):
         with tarfile.open(path, mode="r:xz") as archive:
             members = [member for member in archive.getmembers() if member.isfile() and member.name.endswith(".gr")]
@@ -112,6 +122,18 @@ def _read_pace_text(relative_path: str, source_config: SourceConfig) -> str:
                 raise ValueError(f"Could not read {members[0].name} from {path}.")
             return handle.read().decode("utf-8")
     return path.read_text(encoding="utf-8")
+
+
+def _read_pace_text(relative_path: str, source_config: SourceConfig) -> str:
+    path = _source_file(relative_path, source_config)
+    try:
+        return _read_pace_text_from_path(path)
+    except (EOFError, tarfile.TarError):
+        if source_config.pace_root is not None or not path.name.endswith(".tar.xz"):
+            raise
+        path.unlink(missing_ok=True)
+        path = _download_file(relative_path, source_config, force=True)
+        return _read_pace_text_from_path(path)
 
 
 def parse_pace_gr_text(text: str, *, instance_id: str, source_path: str) -> dict[str, object]:

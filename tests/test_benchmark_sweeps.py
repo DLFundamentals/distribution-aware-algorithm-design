@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,10 @@ from unittest.mock import patch
 from benchmarks.candidate_count_sweep import build_jobs as build_candidate_jobs
 from benchmarks.candidate_count_sweep import main as candidate_main
 from benchmarks.common import SweepJob, aggregate_rows, benchmark_command, run_job
+from benchmarks.llm_pv_benchmark import build_jobs as build_llm_pv_jobs
+from benchmarks.llm_pv_benchmark import _build_prompt_messages as build_llm_pv_prompt_messages
+from benchmarks.llm_pv_benchmark import extract_solution_code
+from benchmarks.llm_pv_benchmark import main as llm_pv_main
 from benchmarks.problem_size_sweep import build_jobs as build_size_jobs
 from benchmarks.problem_size_sweep import main as size_main
 from benchmarks.sample_size_sweep import build_jobs as build_sample_jobs
@@ -87,6 +92,58 @@ class BenchmarkSweepTests(unittest.TestCase):
         command = benchmark_command(jobs[1])
         self.assertIn("--candidate-width", command)
         self.assertIn("5", command)
+
+    def test_llm_pv_defaults_to_representative_targets(self) -> None:
+        from benchmarks.llm_pv_benchmark import build_parser
+
+        with patch.dict(os.environ, {"OPENAI_MODEL": "gpt-5-env", "OPENAI_REASONING_EFFORT": "medium"}):
+            args = build_parser().parse_args(
+                [
+                    "--dry-run",
+                    "--problem",
+                    "tsp",
+                    "--output-root",
+                    tempfile.mkdtemp(prefix="dasbench-llm-pv-"),
+                    "--sweep-id",
+                    "llm-pv",
+                ]
+            )
+        jobs = build_llm_pv_jobs(args)
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].problem, "tsp")
+        self.assertEqual(jobs[0].family, "clustered_euclidean_v1")
+        self.assertEqual(jobs[0].config.attempts, 5)
+        self.assertEqual(jobs[0].config.model, "gpt-5-env")
+        self.assertEqual(jobs[0].config.reasoning_effort, "medium")
+        self.assertIsNone(jobs[0].config.max_output_tokens)
+        self.assertEqual(jobs[0].config.api_timeout_seconds, 14400)
+
+    def test_llm_pv_rejects_truncated_json_as_raw_python(self) -> None:
+        self.assertIsNone(extract_solution_code('{"solution_py": "def solve(instance):\\n    return ['))
+
+    def test_llm_pv_prompt_hides_family_and_includes_output_contract(self) -> None:
+        from benchmarks.llm_pv_benchmark import build_parser
+
+        args = build_parser().parse_args(["--dry-run", "--problem", "tsp"])
+        config = build_llm_pv_jobs(args, sweep_id="prompt")[0].config
+        messages = build_llm_pv_prompt_messages(
+            manifest={
+                "problem": "tsp",
+                "family": "clustered_euclidean_v1",
+                "metric_definition": {"primary": "normalized_quality"},
+                "instance_schema_version": "tsp.v1",
+                "instance_params": {"num_cities": 64},
+            },
+            train_summary={"family": "clustered_euclidean_v1", "num_cities": 64},
+            train_public=[],
+            attempt_index=1,
+            config=config,
+        )
+        prompt = json.loads(messages[1]["content"])
+        self.assertNotIn("family", prompt["train_summary"])
+        self.assertEqual(prompt["solution_contract"]["return_type"], "list[int]")
+        self.assertIn("city ids", prompt["solution_contract"]["required_shape"])
+        self.assertIn("dict", " ".join(prompt["solution_contract"]["do_not_return"]))
 
     def test_completed_report_is_skipped_without_force(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="dasbench-sweep-resume-"))
@@ -246,9 +303,24 @@ class BenchmarkSweepTests(unittest.TestCase):
             ]),
             0,
         )
+        self.assertEqual(
+            llm_pv_main([
+                "--dry-run",
+                "--problem",
+                "tsp",
+                "--max-workers",
+                "1",
+                "--output-root",
+                root,
+                "--sweep-id",
+                "llm_pv",
+            ]),
+            0,
+        )
         self.assertTrue((Path(root) / "sample" / "aggregate_results.json").exists())
         self.assertTrue((Path(root) / "size" / "aggregate_results.csv").exists())
         self.assertTrue((Path(root) / "candidate" / "benchmark_sweep_summary.json").exists())
+        self.assertTrue((Path(root) / "llm_pv_benchmark" / "llm_pv" / "benchmark_sweep_summary.json").exists())
 
 
 if __name__ == "__main__":
