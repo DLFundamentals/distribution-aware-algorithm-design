@@ -20,7 +20,7 @@ from dasbench.agents.progress import (
 )
 from dasbench.data import load_manifest, load_split
 from dasbench.eval.evaluator import evaluate_solver, failed_summary, write_summary
-from dasbench.integrations import build_openai_client, load_openai_api_config
+from dasbench.integrations import create_chat_completion_raw, load_chat_api_config
 from dasbench.problems import get_problem_definition
 from dasbench.timing import BenchmarkTimingReporter
 from dasbench.utils import candidate_manifest
@@ -1068,8 +1068,7 @@ def _generate_response_payload(
     stage_name: str,
     response_schema_path: Path,
 ) -> tuple[dict[str, object], dict[str, object]]:
-    config = load_openai_api_config(required=True)
-    client = build_openai_client(config)
+    config = load_chat_api_config(required=True)
     response_schema = _load_response_schema(str(response_schema_path))
     metadata: dict[str, object] = {
         "api_config": config.public_dict(),
@@ -1080,11 +1079,10 @@ def _generate_response_payload(
         "response_schema_path": str(response_schema_path),
     }
     try:
-        raw_response = client.chat.completions.with_raw_response.create(
+        raw_response = create_chat_completion_raw(
+            config,
             messages=messages,
-            model=config.model,
             response_format=response_schema,
-            reasoning_effort=config.reasoning_effort,
         )
     except OpenAIError as exc:
         raise GenerationDebugError(

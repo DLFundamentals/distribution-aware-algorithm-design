@@ -25,8 +25,22 @@ from dasbench.agents.candidate import build_solver
 from dasbench.agents.progress import selection_sort_key, summarize_selection
 from dasbench.data import load_manifest, load_split
 from dasbench.eval.evaluator import evaluate_solver, failed_summary, write_summary
-from dasbench.integrations import build_openai_client, load_openai_api_config, load_openai_dotenv
-from dasbench.integrations.openai_api import OpenAIAPIConfig
+from dasbench.integrations import (
+    ChatAPIConfig,
+    CustomChatAPIConfig,
+    build_chat_client,
+    chat_completion_text,
+    chat_config_with_overrides,
+    create_chat_completion_raw,
+    load_chat_api_config,
+    load_openai_dotenv,
+)
+from dasbench.integrations.chat_api import (
+    CUSTOM_MODEL_ENV_VAR,
+    CUSTOM_PROVIDER,
+    CUSTOM_REASONING_EFFORT_ENV_VAR,
+    PROVIDER_ENV_VAR,
+)
 from dasbench.problems import get_problem_definition
 from dasbench.utils import candidate_manifest, public_instance, timestamp_token, write_json, write_jsonl
 
@@ -42,13 +56,14 @@ DEFAULT_ATTEMPTS = 5
 DEFAULT_API_TIMEOUT_SECONDS = 14_400
 DEFAULT_PROMPT_TRAIN_EXAMPLES = 64
 DEFAULT_PROMPT_JSON_CHAR_LIMIT = 60_000
+SOLUTION_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "dasbench" / "schemas" / "solution_code_bundle.json"
 
 
 @dataclass(frozen=True)
 class LLMPVConfig:
     attempts: int
     model: str
-    reasoning_effort: str
+    reasoning_effort: str | None
     max_output_tokens: int | None
     api_timeout_seconds: float
     enable_code_interpreter: bool
@@ -68,6 +83,8 @@ class LLMPVJob:
     source_dataset_dir: Path
     force: bool
     config: LLMPVConfig
+    source_run_root: Path | None = None
+    source_condition_id: str = DEFAULT_SOURCE_CONDITION_ID
 
     @property
     def target_root(self) -> Path:
@@ -213,6 +230,10 @@ def _response_text(response: object) -> str:
             if isinstance(text, str):
                 chunks.append(text)
     return "\n".join(chunks).strip()
+
+
+def _load_solution_schema() -> dict[str, object]:
+    return json.loads(SOLUTION_SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
 def _extract_code_field(obj: object) -> str | None:
@@ -429,26 +450,25 @@ def _build_prompt_messages(
     ]
 
 
-def _api_config_for_run(config: LLMPVConfig) -> OpenAIAPIConfig:
-    base = load_openai_api_config(required=True)
+def _api_config_for_run(config: LLMPVConfig) -> ChatAPIConfig:
+    base = load_chat_api_config(required=True)
     assert base is not None
-    return OpenAIAPIConfig(
-        api_key=base.api_key,
+    return chat_config_with_overrides(
+        base,
         model=config.model,
         reasoning_effort=config.reasoning_effort,
-        base_url=base.base_url,
-        organization=base.organization,
-        project=base.project,
     )
 
 
-def _call_openai_for_solution(
+def _call_llm_for_solution(
     *,
     messages: list[dict[str, str]],
     config: LLMPVConfig,
 ) -> tuple[str, dict[str, object]]:
     api_config = _api_config_for_run(config)
-    client = build_openai_client(api_config)
+    if isinstance(api_config, CustomChatAPIConfig):
+        return _call_custom_chat_for_solution(messages=messages, config=config, api_config=api_config)
+    client = build_chat_client(api_config)
     request_body: dict[str, object] = {
         "model": api_config.model,
         "input": [
@@ -490,6 +510,51 @@ def _call_openai_for_solution(
     metadata["usage"] = _normalize_usage(getattr(response, "usage", None))
     metadata["response_dump"] = _safe_model_dump(response)
     return _response_text(response), metadata
+
+
+def _call_custom_chat_for_solution(
+    *,
+    messages: list[dict[str, str]],
+    config: LLMPVConfig,
+    api_config: CustomChatAPIConfig,
+) -> tuple[str, dict[str, object]]:
+    if config.enable_code_interpreter:
+        raise RuntimeError("Code interpreter is only supported by the OpenAI Responses API path.")
+    started = time.perf_counter()
+    metadata: dict[str, object] = {
+        "api_config": {
+            **api_config.public_dict(),
+            "max_output_tokens": config.max_output_tokens,
+            "api_timeout_seconds": config.api_timeout_seconds,
+            "enable_code_interpreter": False,
+            "tool_choice": None,
+            "verbosity": config.verbosity,
+        },
+        "request_messages": messages,
+    }
+    try:
+        raw_response = create_chat_completion_raw(
+            api_config,
+            messages=messages,
+            response_format=_load_solution_schema(),
+            timeout=config.api_timeout_seconds,
+        )
+    except OpenAIError as exc:
+        metadata["generation_wall_ms"] = (time.perf_counter() - started) * 1000.0
+        metadata["generation_error"] = f"{type(exc).__name__}: {exc}"
+        raise
+    metadata["generation_wall_ms"] = (time.perf_counter() - started) * 1000.0
+    metadata["status_code"] = raw_response.status_code
+    metadata["raw_http_text"] = raw_response.text[:20_000]
+    if raw_response.status_code != 200:
+        raise RuntimeError(
+            f"Custom chat API returned status {raw_response.status_code}: {raw_response.text[:1000]}"
+        )
+    completion = raw_response.parse()
+    metadata["parsed_completion"] = _safe_model_dump(completion)
+    metadata["response_model"] = getattr(completion, "model", None)
+    metadata["usage"] = _normalize_usage(getattr(completion, "usage", None))
+    return chat_completion_text(completion), metadata
 
 
 def _write_attempt_failure(
@@ -556,7 +621,7 @@ def _evaluate_attempt(
     raw_text = ""
     metadata: dict[str, object] | None = None
     try:
-        raw_text, metadata = _call_openai_for_solution(messages=messages, config=config)
+        raw_text, metadata = _call_llm_for_solution(messages=messages, config=config)
         (attempt_dir / "raw_response.txt").write_text(raw_text + "\n", encoding="utf-8")
         write_summary(attempt_dir / "generation_metadata.json", metadata)
         solution_py = extract_solution_code(raw_text)
@@ -874,7 +939,9 @@ def _metric(payload: dict[str, object], name: str) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
 
-def _command_for_job(job: LLMPVJob) -> list[str]:
+def _command_for_job(job: LLMPVJob) -> list[str] | None:
+    if job.source_run_root is None:
+        return None
     command = [
         "python",
         "-m",
@@ -886,18 +953,20 @@ def _command_for_job(job: LLMPVJob) -> list[str]:
         "--family",
         job.family,
         "--source-run-root",
-        str(job.source_dataset_dir.parents[4]),
+        str(job.source_run_root),
         "--attempts",
         str(job.config.attempts),
         "--model",
         job.config.model,
-        "--reasoning-effort",
-        job.config.reasoning_effort,
         "--prompt-train-examples",
         str(job.config.prompt_train_examples),
         "--prompt-json-char-limit",
         str(job.config.prompt_json_char_limit),
     ]
+    if job.source_condition_id != DEFAULT_SOURCE_CONDITION_ID:
+        command.extend(["--source-condition-id", job.source_condition_id])
+    if job.config.reasoning_effort is not None:
+        command.extend(["--reasoning-effort", job.config.reasoning_effort])
     if job.config.max_output_tokens is not None:
         command.extend(["--max-output-tokens", str(job.config.max_output_tokens)])
     command.extend(["--api-timeout-seconds", str(job.config.api_timeout_seconds)])
@@ -916,7 +985,7 @@ def _build_config(args: argparse.Namespace) -> LLMPVConfig:
     return LLMPVConfig(
         attempts=max(1, int(args.attempts)),
         model=str(args.model),
-        reasoning_effort=str(args.reasoning_effort),
+        reasoning_effort=None if args.reasoning_effort is None else str(args.reasoning_effort),
         max_output_tokens=None if args.max_output_tokens is None else max(1, int(args.max_output_tokens)),
         api_timeout_seconds=max(1.0, float(args.api_timeout_seconds)),
         enable_code_interpreter=bool(args.enable_code_interpreter),
@@ -930,11 +999,15 @@ def _build_config(args: argparse.Namespace) -> LLMPVConfig:
 
 def _llm_pv_default_model() -> str:
     load_openai_dotenv()
+    if os.getenv(PROVIDER_ENV_VAR, "").strip().lower() == CUSTOM_PROVIDER:
+        return os.getenv(CUSTOM_MODEL_ENV_VAR, DEFAULT_MODEL)
     return os.getenv(OPENAI_MODEL_ENV_VAR, DEFAULT_MODEL)
 
 
-def _llm_pv_default_reasoning_effort() -> str:
+def _llm_pv_default_reasoning_effort() -> str | None:
     load_openai_dotenv()
+    if os.getenv(PROVIDER_ENV_VAR, "").strip().lower() == CUSTOM_PROVIDER:
+        return os.getenv(CUSTOM_REASONING_EFFORT_ENV_VAR)
     return os.getenv(OPENAI_REASONING_EFFORT_ENV_VAR, DEFAULT_REASONING_EFFORT)
 
 
@@ -959,15 +1032,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         default=_llm_pv_default_model(),
-        help=f"OpenAI model. Defaults to ${OPENAI_MODEL_ENV_VAR} when set, otherwise {DEFAULT_MODEL}.",
+        help=(
+            f"LLM model. Defaults to ${CUSTOM_MODEL_ENV_VAR} for custom_chat, "
+            f"otherwise ${OPENAI_MODEL_ENV_VAR} when set, otherwise {DEFAULT_MODEL}."
+        ),
     )
     parser.add_argument(
         "--reasoning-effort",
         choices=["minimal", "low", "medium", "high", "xhigh"],
         default=_llm_pv_default_reasoning_effort(),
         help=(
-            f"OpenAI reasoning effort. Defaults to ${OPENAI_REASONING_EFFORT_ENV_VAR} "
-            f"when set, otherwise {DEFAULT_REASONING_EFFORT}."
+            f"LLM reasoning effort. Defaults to ${CUSTOM_REASONING_EFFORT_ENV_VAR} for custom_chat "
+            f"when set, otherwise ${OPENAI_REASONING_EFFORT_ENV_VAR} when set, otherwise "
+            f"{DEFAULT_REASONING_EFFORT} for OpenAI."
         ),
     )
     parser.add_argument(
@@ -984,7 +1061,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_API_TIMEOUT_SECONDS,
         help=(
-            "Per-attempt OpenAI request timeout in seconds. Defaults to "
+            "Per-attempt LLM API request timeout in seconds. Defaults to "
             f"{DEFAULT_API_TIMEOUT_SECONDS} seconds so long reasoning calls can finish."
         ),
     )
@@ -1017,6 +1094,8 @@ def build_jobs(args: argparse.Namespace, *, sweep_id: str | None = None) -> list
             source_dataset_dir=_source_dataset_dir(source_run_root, args.source_condition_id, problem, family),
             force=bool(args.force),
             config=config,
+            source_run_root=source_run_root,
+            source_condition_id=str(args.source_condition_id),
         )
         for problem, family in targets
     ]
@@ -1057,7 +1136,7 @@ def run_sweep(args: argparse.Namespace, *, sweep_id: str | None = None) -> dict[
     resolved_sweep_id = sweep_id or args.sweep_id or timestamp_token()
     jobs = build_jobs(args, sweep_id=resolved_sweep_id)
     if not args.dry_run:
-        load_openai_api_config(required=True)
+        load_chat_api_config(required=True)
     output_dir = resolve_sweep_artifact_root(args.output_root, BENCHMARK_KIND, resolved_sweep_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     max_workers = max(1, min(int(args.max_workers), len(jobs) or 1))

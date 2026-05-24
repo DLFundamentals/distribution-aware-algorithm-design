@@ -17,7 +17,7 @@ from typing import Any
 from dasbench.artifacts import default_agent_run_dir, default_dataset_dir, default_report_dir
 from dasbench.data import BenchmarkSpec, generate_dataset, load_manifest, load_spec
 from dasbench.families import available_family_names
-from dasbench.integrations import load_openai_api_config, load_openai_dotenv
+from dasbench.integrations import load_chat_api_config, load_openai_dotenv
 from dasbench.problems import available_problem_names
 from dasbench.utils import load_jsonl, timestamp_token, write_json, write_jsonl
 from tqdm import tqdm
@@ -728,8 +728,8 @@ def run_sweep(
     dry_run: bool,
 ) -> dict[str, object]:
     load_openai_dotenv()
-    if any(job.generator == "llm" for job in jobs) and not dry_run:
-        load_openai_api_config(required=True)
+    if any(job.generator in {"llm", "llm_no_hint"} for job in jobs) and not dry_run:
+        load_chat_api_config(required=True)
 
     output_dir = resolve_sweep_artifact_root(output_root, sweep_kind, sweep_id)
     output_dir.mkdir(parents=True, exist_ok=True)

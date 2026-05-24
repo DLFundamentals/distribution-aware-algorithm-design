@@ -7,7 +7,12 @@ from pathlib import Path
 
 from dasbench.agents.candidate import build_solver, run_analysis
 from dasbench.eval.evaluator import evaluate_solver
-from dasbench.integrations import build_openai_client, load_openai_api_config
+from dasbench.integrations import (
+    chat_completion_text,
+    chat_config_with_overrides,
+    create_chat_completion_raw,
+    load_chat_api_config,
+)
 from dasbench.utils import load_jsonl, public_instance
 
 
@@ -120,7 +125,7 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _load_cache(path: Path, *, reasoning_effort: str) -> dict[str, object]:
+def _load_cache(path: Path, *, reasoning_effort: str | None) -> dict[str, object]:
     if not path.exists():
         return {
             "schema_version": CACHE_SCHEMA_VERSION,
@@ -242,7 +247,7 @@ def _generate_zero_shot_solution(
     instance_schema: object,
     instance_example: object,
     *,
-    reasoning_effort: str,
+    reasoning_effort: str | None,
 ) -> None:
     solution_path = candidate_dir / "solution.py"
     metadata_path = candidate_dir / "solution_generation_metadata.json"
@@ -255,15 +260,13 @@ def _generate_zero_shot_solution(
         ):
             return
 
-    config = load_openai_api_config(required=True)
-    client = build_openai_client(config)
+    config = chat_config_with_overrides(load_chat_api_config(required=True), reasoning_effort=reasoning_effort)
     response_schema = _load_json(SOLUTION_SCHEMA_PATH)
     messages = _solution_messages(manifest, instance_schema, instance_example)
-    raw_response = client.chat.completions.with_raw_response.create(
+    raw_response = create_chat_completion_raw(
+        config,
         messages=messages,
-        model=config.model,
         response_format=response_schema,
-        reasoning_effort=reasoning_effort,
     )
     if raw_response.status_code != 200:
         raise RuntimeError(
@@ -276,8 +279,8 @@ def _generate_zero_shot_solution(
     refusal = getattr(message, "refusal", None)
     if refusal:
         raise RuntimeError(f"Model refused zero-shot solver generation: {refusal}")
-    content = getattr(message, "content", None)
-    if not isinstance(content, str) or not content.strip():
+    content = chat_completion_text(completion)
+    if not content:
         raise RuntimeError("Zero-shot solver generation returned empty content.")
     payload = json.loads(content)
     if not isinstance(payload, dict):
@@ -358,7 +361,7 @@ def _zero_shot_test_runtime_ms(
     family: str,
     dataset_dir: Path,
     zero_shot_root: Path,
-    reasoning_effort: str,
+    reasoning_effort: str | None,
     cache: dict[str, object],
     cache_path: Path,
     reuse_from_family: str | None = None,
@@ -632,17 +635,18 @@ def main(argv: list[str] | None = None) -> int:
     if not condition_root.exists():
         raise SystemExit(f"Condition directory not found: {condition_root}")
 
-    config = load_openai_api_config(required=True)
+    config = load_chat_api_config(required=True)
     zero_shot_reasoning_effort = args.zero_shot_reasoning_effort or config.reasoning_effort
+    zero_shot_reasoning_label = zero_shot_reasoning_effort or "default"
     zero_shot_root = (
         args.zero_shot_root.resolve()
         if args.zero_shot_root is not None
-        else sweep_root / f"zero_shot_generic_{zero_shot_reasoning_effort}"
+        else sweep_root / f"zero_shot_generic_{zero_shot_reasoning_label}"
     )
     output_dir = (
         args.output_dir.resolve()
         if args.output_dir is not None
-        else sweep_root / "plots" / f"iteration_runtime_ratio_vs_zero_shot_{zero_shot_reasoning_effort}"
+        else sweep_root / "plots" / f"iteration_runtime_ratio_vs_zero_shot_{zero_shot_reasoning_label}"
     )
     cache_path = output_dir / "iteration_runtime_ratio_vs_zero_shot_data.json"
     cache = _load_cache(cache_path, reasoning_effort=zero_shot_reasoning_effort)

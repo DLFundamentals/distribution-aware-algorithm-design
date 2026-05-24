@@ -19,7 +19,7 @@ from dasbench.integrations import (
     NativeExactConfig,
     build_external_exact_solvers,
     build_gurobi_solver,
-    load_openai_api_config,
+    load_chat_api_config,
     load_openai_dotenv,
     openai_api_is_configured,
 )
@@ -39,7 +39,7 @@ def _resolve_generator(generator: str) -> str:
 
 def _ensure_generator_ready(generator: str) -> None:
     if generator in {"llm", "llm_no_hint"}:
-        load_openai_api_config(required=True)
+        load_chat_api_config(required=True)
 
 
 def _build_spec_from_args(args: argparse.Namespace) -> BenchmarkSpec:

@@ -96,7 +96,10 @@ class BenchmarkSweepTests(unittest.TestCase):
     def test_llm_pv_defaults_to_representative_targets(self) -> None:
         from benchmarks.llm_pv_benchmark import build_parser
 
-        with patch.dict(os.environ, {"OPENAI_MODEL": "gpt-5-env", "OPENAI_REASONING_EFFORT": "medium"}):
+        with patch.dict(
+            os.environ,
+            {"LLM_PROVIDER": "openai", "OPENAI_MODEL": "gpt-5-env", "OPENAI_REASONING_EFFORT": "medium"},
+        ):
             args = build_parser().parse_args(
                 [
                     "--dry-run",
