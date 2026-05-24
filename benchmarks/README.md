@@ -34,14 +34,17 @@ selects the best attempt by validation quality/optimality/runtime, and evaluates
 selected solver on test.
 
 Defaults match the reference LLM-PV search shape closely: `--attempts 5` and early stop at
-validation quality `1.0`. `--model` defaults to `OPENAI_MODEL` when set and otherwise
-`gpt-5`; `--reasoning-effort` defaults to `OPENAI_REASONING_EFFORT` when set and otherwise
-`high`. Output is uncapped by default; pass `--max-output-tokens` only when you want to cap
-the combined reasoning and visible output budget. OpenAI requests use a large per-attempt
-timeout by default (`--api-timeout-seconds 14400`) so high-reasoning calls can finish. Code
+validation quality `1.0`. `--model` defaults to the active provider's model environment
+variable when set and otherwise `gpt-5`; `--reasoning-effort` defaults to the active provider's
+reasoning-effort environment variable when set and otherwise `high` for OpenAI. Output is
+uncapped by default; pass `--max-output-tokens` only when you want to cap the combined reasoning
+and visible output budget. LLM API requests use a large per-attempt timeout by default
+(`--api-timeout-seconds 14400`) so high-reasoning calls can finish. Code
 interpreter is off by default and can be enabled with `--enable-code-interpreter`. Prompts include
 problem-specific return-shape contracts, but evaluation still uses the normal DasBench solver
 interfaces. The benchmark runs one representative family per problem unless `--all-families` is passed.
+Calls through the alternate chat provider use `CUSTOM_CHAT_TIMEOUT_SECONDS=14400` by default when
+the caller does not pass a timeout, and retry HTTP 524 responses up to three times.
 
 Example:
 
@@ -88,6 +91,7 @@ PACE helper scripts are kept because they support the external Dominating Set di
 
 ```bash
 python -m scripts.pace2025_run_heuristic_baselines --count 5
+python -m scripts.pace2025_run_llm_pv_baseline --attempts 5
 python -m scripts.pace2025_collect_heuristic_report
 ```
 
