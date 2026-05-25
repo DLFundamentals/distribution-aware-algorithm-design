@@ -17,7 +17,15 @@ wheels/
 results/
 
 # Local exact baseline solver builds/binaries
-baselines/
+baselines/*
+!baselines/__init__.py
+!baselines/src/
+baselines/src/*
+!baselines/src/__init__.py
+!baselines/src/ml_baselines/
+!baselines/src/ml_baselines/**
+baselines/src/ml_baselines/__pycache__/
+baselines/src/ml_baselines/**/__pycache__/
 
 # Competition Datasets
 competitions/datasets/*

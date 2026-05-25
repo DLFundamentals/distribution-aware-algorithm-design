@@ -343,6 +343,7 @@ def generate_benchmark_report(
     best_candidate = synthesis_summary["best_candidate"]
     candidate_dir = Path(best_candidate["candidate_dir"])
     train_instances = load_split(dataset_dir, "train", public=True)
+    validation_instances_public = load_split(dataset_dir, "validation", public=True)
     candidate_analysis_start = time.perf_counter()
     analysis = run_analysis(
         candidate_dir,
@@ -422,6 +423,8 @@ def generate_benchmark_report(
                     native_exact_config=resolved_native_exact_config,
                     external_config=resolved_external_config,
                     artifact_dir=output_dir,
+                    train_instances=train_instances,
+                    validation_instances=validation_instances_public,
                 )
             for baseline_name, baseline_solver in baselines.items():
                 baseline_start = time.perf_counter()

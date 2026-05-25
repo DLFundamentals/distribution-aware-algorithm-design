@@ -361,12 +361,16 @@ def _run_baselines(
     timing_reporter: BenchmarkTimingReporter | None = None,
 ) -> tuple[dict[str, dict[str, dict[str, object]]], dict[str, object]]:
     manifest = load_manifest(dataset_dir)
+    train_public = load_split(dataset_dir, "train", public=True)
+    validation_public = load_split(dataset_dir, "validation", public=True)
     baselines, external_discovery = resolve_baselines(
         str(manifest["problem"]),
         gurobi_config=gurobi_config,
         native_exact_config=native_exact_config,
         external_config=external_config,
         artifact_dir=output_dir,
+        train_instances=train_public,
+        validation_instances=validation_public,
     )
     write_external_discovery(output_dir, external_discovery)
     split_results: dict[str, dict[str, dict[str, object]]] = {}
@@ -392,6 +396,8 @@ def _run_baselines(
             if baseline_name not in split_summaries
         ]
         worker_count = max(1, int(baseline_workers))
+        if any(name.startswith("ml_") for name in pending_baseline_names):
+            worker_count = 1
         if not pending_baseline_names:
             split_results[split_name] = split_summaries
             continue
