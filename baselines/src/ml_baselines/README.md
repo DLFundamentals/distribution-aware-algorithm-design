@@ -6,6 +6,7 @@ This package contains lightweight trainable baselines for DasBench distributions
 
 - `ml_gnn_mis_score_repair`: manual PyTorch message passing over graph features, unsupervised independent-set loss, greedy feasible repair.
 - `ml_gnn_mds_score_repair`: manual PyTorch message passing, unsupervised domination loss, greedy cover/prune repair.
+- `ml_gnn_rl_mds`: DDQN-style graph neural policy for minimum dominating set, trained with public graph rollouts and decoded with bounded repair/pruning.
 - `ml_pignn_coloring`: physics-inspired graph coloring baseline with a Potts-model conflict loss over color logits, fixed-budget repair, and DSATUR feasibility fallback.
 - `ml_gnn_maxsat_assignment`: variable-clause bipartite message passing, soft expected-satisfied-clause objective, threshold/sample/polarity seeds plus bounded flips.
 - `ml_runcsp_maxsat`: RUN-CSP-style recurrent variable/factor message passing for MaxSAT, unsupervised expected satisfied-clause loss, and bounded stochastic WalkSAT decoding.
@@ -114,6 +115,7 @@ Each trial trains on the public train split, evaluates on validation, selects by
 | --- | --- |
 | `ml_gnn_mis_score_repair` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `inference_restarts=4`, `repair_budget=64`, `seed=0` |
 | `ml_gnn_mds_score_repair` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `inference_restarts=4`, `repair_budget=64`, `seed=0` |
+| `ml_gnn_rl_mds` | `episodes=5000`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `gamma=0.99`, `epsilon_start=1.0`, `epsilon_end=0.05`, `batch_size=64`, `target_update_interval=200`, `max_steps_factor=1.5`, `repair_budget=128`, `seed=0` |
 | `ml_pignn_coloring` | `epochs=100`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `inference_restarts=8`, `repair_budget=256`, `temperature_start=1.0`, `temperature_end=0.2`, `seed=0` |
 | `ml_gnn_maxsat_assignment` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `samples=8`, `walksat_flips=1000`, `seed=0` |
 | `ml_runcsp_maxsat` | `epochs=100`, `hidden_dim=64`, `message_passing_steps=16`, `recurrent_layers=1`, `learning_rate=1e-3`, `samples=16`, `walksat_restarts=4`, `walksat_flips=1000`, `noise=0.1`, `seed=0` |
@@ -168,6 +170,7 @@ is_valid,is_feasible,is_optimal,runtime_ms,error,solution
 - Models are intentionally small and one-instance-at-a-time; `batch_size` is accepted in configs but not fully batched yet.
 - Hyperparameter search is an explicit list, not a Cartesian product expander.
 - TSP uses an edge-heatmap self-training fallback rather than an attention/pointer decoder.
+- RL baselines (`ml_gnn_rl_mds`, `ml_drl_mdkp`) can need more training time and variance control than the smaller unsupervised score-repair baselines.
 - `ml_drl_mdkp` uses public heuristic initialization instead of the solver-assisted initialization described in the reference paper.
 - Checkpoints are saved for reproducibility, but the runner retrains for each invocation rather than loading old checkpoints automatically.
 - Validation/test scoring requires generated split files with the usual scorer metadata, including optima where the problem scorer expects them.

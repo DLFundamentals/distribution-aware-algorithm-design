@@ -24,6 +24,14 @@ from ml_baselines.drl_mdkp import (
     item_worth_order,
     repair_mdkp_selection,
 )
+from ml_baselines.gnn_rl_mds import (
+    GNN_RL_MDS_BASELINE_NAME,
+    GNNRLMDSConfig,
+    DominatingSetEnvironment,
+    build_gnn_rl_mds_baselines,
+    decode_gnn_rl_mds,
+    repair_dominating_set,
+)
 from ml_baselines.graph_score_repair import (
     GraphScoreRepairConfig,
     build_graph_score_repair_baselines,
@@ -90,6 +98,9 @@ __all__ = [
     "BaselineAdapter",
     "DRL_MDKP_BASELINE_NAME",
     "DRLMDKPConfig",
+    "DominatingSetEnvironment",
+    "GNN_RL_MDS_BASELINE_NAME",
+    "GNNRLMDSConfig",
     "GraphScoreRepairConfig",
     "GraphTensor",
     "ItemResourceConfig",
@@ -113,6 +124,7 @@ __all__ = [
     "bounded_two_opt_from_matrix",
     "bounded_walksat_local_search",
     "build_drl_mdkp_baselines",
+    "build_gnn_rl_mds_baselines",
     "build_graph_score_repair_baselines",
     "build_item_resource_baselines",
     "build_maxsat_assignment_baselines",
@@ -125,6 +137,7 @@ __all__ = [
     "decode_mis_scores",
     "decode_packinglp_fractions",
     "decode_fixed_k_coloring",
+    "decode_gnn_rl_mds",
     "decode_pignn_coloring",
     "decode_runcsp_assignment",
     "decode_tsp_heatmap",
@@ -134,6 +147,7 @@ __all__ = [
     "load_and_tensorize_train_validation",
     "load_public_split",
     "load_public_train_validation",
+    "repair_dominating_set",
     "repair_mdkp_selection",
     "save_checkpoint",
     "seed_everything",

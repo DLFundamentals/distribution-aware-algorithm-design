@@ -72,6 +72,18 @@ BASELINE_DESCRIPTIONS = {
             "[Learning-Based Heuristic for Combinatorial Optimization of the Minimum Dominating Set Problem using Graph Convolutional Networks, 2023](https://arxiv.org/abs/2306.03434)",
         ],
     },
+    "ml_gnn_rl_mds": {
+        "problem": "mds",
+        "source": "baselines/src/ml_baselines/gnn_rl_mds.py",
+        "learns": "Q-values for selecting graph vertices into a dominating set from dynamic selected/dominated/gain state features.",
+        "training": "DDQN-style public graph rollouts with epsilon-greedy exploration, replay, and a target GNN; no optimum sets are used.",
+        "feasibility": "Greedy Q-policy is bounded by max_steps_factor*n, then deterministic coverage repair and redundancy pruning produce a valid dominating set.",
+        "defaults": "episodes=5000, hidden_dim=64, layers=3, lr=1e-3, gamma=0.99, batch_size=64, target_update_interval=200, repair_budget=128, seed=0",
+        "papers": [
+            "[Chen, Liu, and He, 2024, Learn to solve dominating set problem with GNN and reinforcement learning](https://www.sciencedirect.com/science/article/abs/pii/S0096300324001899)",
+            "[Mnih et al., 2015, Human-level control through deep reinforcement learning](https://www.nature.com/articles/nature14236)",
+        ],
+    },
     "ml_pignn_coloring": {
         "problem": "coloring",
         "source": "baselines/src/ml_baselines/pignn_coloring.py",

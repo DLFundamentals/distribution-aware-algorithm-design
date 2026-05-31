@@ -21,6 +21,9 @@ from dasbench.utils import load_jsonl, public_instance, write_json, write_jsonl
 from ml_baselines.drl_mdkp import DRL_MDKP_BASELINE_NAME
 from ml_baselines.drl_mdkp import fit as fit_drl_mdkp
 from ml_baselines.drl_mdkp import solve as solve_drl_mdkp
+from ml_baselines.gnn_rl_mds import GNN_RL_MDS_BASELINE_NAME
+from ml_baselines.gnn_rl_mds import fit as fit_gnn_rl_mds
+from ml_baselines.gnn_rl_mds import solve as solve_gnn_rl_mds
 from ml_baselines.graph_score_repair import GRAPH_BASELINE_NAMES
 from ml_baselines.graph_score_repair import fit as fit_graph
 from ml_baselines.graph_score_repair import solve as solve_graph
@@ -101,6 +104,18 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
             metrics_path=metrics_path,
         ),
         solve=lambda problem, instance, state, config: solve_graph(problem, instance, state, config),
+    ),
+    GNN_RL_MDS_BASELINE_NAME: BaselineSpec(
+        name=GNN_RL_MDS_BASELINE_NAME,
+        problem="mds",
+        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_gnn_rl_mds(
+            train,
+            val,
+            config,
+            checkpoint_path=checkpoint_path,
+            metrics_path=metrics_path,
+        ),
+        solve=lambda problem, instance, state, config: solve_gnn_rl_mds(instance, state, config),
     ),
     PIGNN_COLORING_BASELINE_NAME: BaselineSpec(
         name=PIGNN_COLORING_BASELINE_NAME,
