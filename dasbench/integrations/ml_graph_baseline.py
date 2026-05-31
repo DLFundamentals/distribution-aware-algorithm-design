@@ -40,6 +40,21 @@ def build_ml_graph_baselines(
                 config=config,
             )
         )
+    if problem_name == "mis":
+        try:
+            from ml_baselines.pignn_mis import build_pignn_mis_baselines
+        except ImportError:
+            build_pignn_mis_baselines = None
+        if build_pignn_mis_baselines is not None:
+            baselines.update(
+                build_pignn_mis_baselines(
+                    problem_name,
+                    train_instances,
+                    validation_instances or [],
+                    artifact_dir=artifact_dir,
+                    config=config,
+                )
+            )
     if problem_name == "mds":
         try:
             from ml_baselines.gnn_rl_mds import build_gnn_rl_mds_baselines

@@ -5,6 +5,7 @@ This package contains lightweight trainable baselines for DasBench distributions
 ## Baselines
 
 - `ml_gnn_mis_score_repair`: manual PyTorch message passing over graph features, unsupervised independent-set loss, greedy feasible repair.
+- `ml_pignn_mis`: physics-inspired MIS baseline with an explicit QUBO/Hamiltonian relaxation, annealed sigmoid variables, deterministic projection, and bounded local improvement.
 - `ml_gnn_mds_score_repair`: manual PyTorch message passing, unsupervised domination loss, greedy cover/prune repair.
 - `ml_gnn_rl_mds`: DDQN-style graph neural policy for minimum dominating set, trained with public graph rollouts and decoded with bounded repair/pruning.
 - `ml_pignn_coloring`: physics-inspired graph coloring baseline with a Potts-model conflict loss over color logits, fixed-budget repair, and DSATUR feasibility fallback.
@@ -114,6 +115,7 @@ Each trial trains on the public train split, evaluates on validation, selects by
 | Baseline | Key Defaults |
 | --- | --- |
 | `ml_gnn_mis_score_repair` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `inference_restarts=4`, `repair_budget=64`, `seed=0` |
+| `ml_pignn_mis` | `epochs=200`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `qubo_penalty=2.0`, `temperature_start=1.0`, `temperature_end=0.1`, `inference_restarts=8`, `repair_budget=128`, `seed=0` |
 | `ml_gnn_mds_score_repair` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `inference_restarts=4`, `repair_budget=64`, `seed=0` |
 | `ml_gnn_rl_mds` | `episodes=5000`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `gamma=0.99`, `epsilon_start=1.0`, `epsilon_end=0.05`, `batch_size=64`, `target_update_interval=200`, `max_steps_factor=1.5`, `repair_budget=128`, `seed=0` |
 | `ml_pignn_coloring` | `epochs=100`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `inference_restarts=8`, `repair_budget=256`, `temperature_start=1.0`, `temperature_end=0.2`, `seed=0` |
@@ -170,6 +172,7 @@ is_valid,is_feasible,is_optimal,runtime_ms,error,solution
 - Models are intentionally small and one-instance-at-a-time; `batch_size` is accepted in configs but not fully batched yet.
 - Hyperparameter search is an explicit list, not a Cartesian product expander.
 - TSP uses an edge-heatmap self-training fallback rather than an attention/pointer decoder.
+- PI-GNN MIS is distribution-trained for DasBench parity; the reference paper also studies per-instance optimization.
 - RL baselines (`ml_gnn_rl_mds`, `ml_drl_mdkp`) can need more training time and variance control than the smaller unsupervised score-repair baselines.
 - `ml_drl_mdkp` uses public heuristic initialization instead of the solver-assisted initialization described in the reference paper.
 - Checkpoints are saved for reproducibility, but the runner retrains for each invocation rather than loading old checkpoints automatically.

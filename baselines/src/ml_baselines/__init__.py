@@ -61,6 +61,13 @@ from ml_baselines.pignn_coloring import (
     decode_fixed_k_coloring,
     decode_pignn_coloring,
 )
+from ml_baselines.pignn_mis import (
+    PIGNN_MIS_BASELINE_NAME,
+    PiGNNMISConfig,
+    build_pignn_mis_baselines,
+    decode_pignn_mis_scores,
+    mis_qubo_loss_from_probabilities,
+)
 from ml_baselines.runcsp_maxsat import (
     RUN_CSP_MAXSAT_BASELINE_NAME,
     RunCSPMaxSatConfig,
@@ -112,8 +119,10 @@ __all__ = [
     "MaxSatAssignmentConfig",
     "PACKINGLP_BASELINE_NAME",
     "PIGNN_COLORING_BASELINE_NAME",
+    "PIGNN_MIS_BASELINE_NAME",
     "PackingTensor",
     "PiGNNColoringConfig",
+    "PiGNNMISConfig",
     "RUN_CSP_MAXSAT_BASELINE_NAME",
     "RunCSPMaxSatConfig",
     "TrainedState",
@@ -129,6 +138,7 @@ __all__ = [
     "build_item_resource_baselines",
     "build_maxsat_assignment_baselines",
     "build_pignn_coloring_baselines",
+    "build_pignn_mis_baselines",
     "build_runcsp_maxsat_baselines",
     "build_tsp_neural_constructor_baselines",
     "decode_assignment",
@@ -139,6 +149,7 @@ __all__ = [
     "decode_fixed_k_coloring",
     "decode_gnn_rl_mds",
     "decode_pignn_coloring",
+    "decode_pignn_mis_scores",
     "decode_runcsp_assignment",
     "decode_tsp_heatmap",
     "heuristic_feasible_solution",
@@ -147,6 +158,7 @@ __all__ = [
     "load_and_tensorize_train_validation",
     "load_public_split",
     "load_public_train_validation",
+    "mis_qubo_loss_from_probabilities",
     "repair_dominating_set",
     "repair_mdkp_selection",
     "save_checkpoint",

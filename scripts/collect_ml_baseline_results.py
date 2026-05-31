@@ -59,6 +59,18 @@ BASELINE_DESCRIPTIONS = {
             "[Schuetz, Brubaker, and Katzgraber, 2022, Combinatorial optimization with physics-inspired graph neural networks](https://www.nature.com/articles/s42256-022-00468-6)",
         ],
     },
+    "ml_pignn_mis": {
+        "problem": "mis",
+        "source": "baselines/src/ml_baselines/pignn_mis.py",
+        "learns": "Relaxed binary node variables for maximum independent set using graph message passing.",
+        "training": "Unsupervised PI-GNN/QUBO Hamiltonian maximizes node mass while penalizing selected edges with annealed sigmoid temperature.",
+        "feasibility": "Probabilities are projected by score-ordered greedy independent-set construction, fill repair, and bounded 1-for-2 local improvement.",
+        "defaults": "epochs=200, hidden_dim=64, layers=3, lr=1e-3, qubo_penalty=2.0, temperature_start=1.0, temperature_end=0.1, inference_restarts=8, repair_budget=128, seed=0",
+        "papers": [
+            "[Schuetz, Brubaker, and Katzgraber, 2022, Combinatorial optimization with physics-inspired graph neural networks](https://www.nature.com/articles/s42256-022-00468-6)",
+            "[Schuetz, Brubaker, and Katzgraber, 2021, arXiv preprint](https://arxiv.org/abs/2107.01188)",
+        ],
+    },
     "ml_gnn_mds_score_repair": {
         "problem": "mds",
         "source": "baselines/src/ml_baselines/graph_score_repair.py",

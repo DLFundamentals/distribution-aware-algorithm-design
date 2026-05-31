@@ -36,6 +36,9 @@ from ml_baselines.maxsat_assignment import solve as solve_maxsat
 from ml_baselines.pignn_coloring import PIGNN_COLORING_BASELINE_NAME
 from ml_baselines.pignn_coloring import fit as fit_pignn_coloring
 from ml_baselines.pignn_coloring import solve as solve_pignn_coloring
+from ml_baselines.pignn_mis import PIGNN_MIS_BASELINE_NAME
+from ml_baselines.pignn_mis import fit as fit_pignn_mis
+from ml_baselines.pignn_mis import solve as solve_pignn_mis
 from ml_baselines.runcsp_maxsat import RUN_CSP_MAXSAT_BASELINE_NAME
 from ml_baselines.runcsp_maxsat import fit as fit_runcsp_maxsat
 from ml_baselines.runcsp_maxsat import solve as solve_runcsp_maxsat
@@ -91,6 +94,18 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
             metrics_path=metrics_path,
         ),
         solve=lambda problem, instance, state, config: solve_graph(problem, instance, state, config),
+    ),
+    PIGNN_MIS_BASELINE_NAME: BaselineSpec(
+        name=PIGNN_MIS_BASELINE_NAME,
+        problem="mis",
+        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_pignn_mis(
+            train,
+            val,
+            config,
+            checkpoint_path=checkpoint_path,
+            metrics_path=metrics_path,
+        ),
+        solve=lambda problem, instance, state, config: solve_pignn_mis(instance, state, config),
     ),
     GRAPH_BASELINE_NAMES["mds"]: BaselineSpec(
         name=GRAPH_BASELINE_NAMES["mds"],
