@@ -25,13 +25,16 @@ from benchmarks.pace2025_dominating_set import (
     parse_pace_gr_text,
     write_pace_solution,
 )
+from dasbench.integrations.gurobi_baseline import GurobiBaselineConfig, build_gurobi_solver
 from dasbench.problems import get_problem_definition
+from dasbench.problems.base import SolveOutcome
 from dasbench.utils import public_instance
 from dasbench.utils import write_json
 
 
 DEFAULT_OUTPUT_ROOT = Path("artifacts/pace2025_dominating_set/baseline_comparisons")
 DEFAULT_EXPANDED_DIR = Path("artifacts/external/pace2025-instances-expanded")
+GUROBI_BASELINE_NAME = "gurobi_timed"
 DEFAULT_DASBENCH_MDS_BASELINES = (
     "high_degree_greedy",
     "fast_marginal_gain_greedy",
@@ -496,15 +499,24 @@ def _dasbench_baselines_from_arg(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _default_gurobi_time_limit_seconds(wrapper_timeout_seconds: float) -> float:
+    slack_seconds = min(30.0, max(5.0, wrapper_timeout_seconds * 0.1))
+    return max(1.0, wrapper_timeout_seconds - slack_seconds)
+
+
 def _run_dasbench_baseline(
     *,
     baseline_name: str,
     exposed_instance: dict[str, object],
     timeout_seconds: float,
-) -> tuple[list[int], bool, str, float, bool]:
+    gurobi_config: GurobiBaselineConfig | None,
+) -> tuple[list[int], bool, str, float, bool, dict[str, object]]:
     context = get_context("fork")
     queue: Queue = context.Queue(maxsize=1)
-    process = context.Process(target=_run_dasbench_baseline_child, args=(baseline_name, exposed_instance, queue))
+    process = context.Process(
+        target=_run_dasbench_baseline_child,
+        args=(baseline_name, exposed_instance, queue, gurobi_config),
+    )
     start = time.perf_counter()
     process.start()
     process.join(timeout_seconds)
@@ -515,29 +527,55 @@ def _run_dasbench_baseline(
         if process.is_alive():
             process.kill()
             process.join()
-        return [], False, f"DasBench baseline `{baseline_name}` exceeded {timeout_seconds:.3f}s.", runtime_ms, True
+        return (
+            [],
+            False,
+            f"DasBench baseline `{baseline_name}` exceeded {timeout_seconds:.3f}s.",
+            runtime_ms,
+            True,
+            {},
+        )
     if queue.empty():
-        return [], False, f"DasBench baseline `{baseline_name}` exited without returning a result.", runtime_ms, False
+        return [], False, f"DasBench baseline `{baseline_name}` exited without returning a result.", runtime_ms, False, {}
     payload = queue.get()
     if payload["status"] == "ok":
-        return payload["solution"], payload["valid"], payload["error"], runtime_ms, False
-    return [], False, payload["error"], runtime_ms, False
+        return payload["solution"], payload["valid"], payload["error"], runtime_ms, False, payload.get("metadata", {})
+    return [], False, payload["error"], runtime_ms, False, payload.get("metadata", {})
 
 
 def _run_dasbench_baseline_child(
     baseline_name: str,
     exposed_instance: dict[str, object],
     queue: Queue,
+    gurobi_config: GurobiBaselineConfig | None,
 ) -> None:
     problem = get_problem_definition("mds")
-    registry = problem.baseline_registry()
     try:
-        raw_solution = registry[baseline_name](exposed_instance)
+        if baseline_name == GUROBI_BASELINE_NAME:
+            raw_result = build_gurobi_solver("mds", gurobi_config or GurobiBaselineConfig())(exposed_instance)
+        else:
+            registry = problem.baseline_registry()
+            raw_result = registry[baseline_name](exposed_instance)
+        if isinstance(raw_result, SolveOutcome):
+            raw_solution = raw_result.solution
+            metadata = dict(raw_result.metadata or {})
+        else:
+            raw_solution = raw_result
+            metadata = {}
         solution = problem.canonicalize_solution(raw_solution, exposed_instance)
         valid, validation_error = problem.validate_solution(solution, exposed_instance)
-        queue.put({"status": "ok", "solution": solution, "valid": valid, "error": validation_error or ""})
+        queue.put(
+            {
+                "status": "ok",
+                "solution": solution,
+                "valid": valid,
+                "error": validation_error or "",
+                "metadata": metadata,
+            }
+        )
     except Exception as exc:
-        queue.put({"status": "error", "error": f"{type(exc).__name__}: {exc}"})
+        metadata = getattr(exc, "metadata", None)
+        queue.put({"status": "error", "error": f"{type(exc).__name__}: {exc}", "metadata": metadata or {}})
 
 
 def _run_dasbench_baseline_job(
@@ -547,6 +585,7 @@ def _run_dasbench_baseline_job(
     output_dir: Path,
     timeout_seconds: float,
     reference: dict[str, str],
+    gurobi_config: GurobiBaselineConfig | None,
 ) -> dict[str, object]:
     instance = parse_pace_gr_text(
         prepared.input_path.read_text(encoding="utf-8", errors="replace"),
@@ -555,10 +594,11 @@ def _run_dasbench_baseline_job(
     )
     exposed = public_instance(instance)
     solver_name = f"dasbench_{baseline_name}"
-    solution, valid, error, runtime_ms, timed_out = _run_dasbench_baseline(
+    solution, valid, error, runtime_ms, timed_out, metadata = _run_dasbench_baseline(
         baseline_name=baseline_name,
         exposed_instance=exposed,
         timeout_seconds=timeout_seconds,
+        gurobi_config=gurobi_config,
     )
 
     solution_file = output_dir / "solutions" / solver_name / f"{prepared.instance_id}.sol"
@@ -583,6 +623,14 @@ def _run_dasbench_baseline_job(
         "solution_file": str(solution_file),
         "stderr_file": "",
         "error": "" if valid else error,
+        "gurobi_runtime_ms": metadata.get("gurobi_runtime_ms", ""),
+        "gurobi_status": metadata.get("status", ""),
+        "gurobi_objective_value": metadata.get("objective_value", ""),
+        "gurobi_best_bound": metadata.get("best_bound", ""),
+        "gurobi_mip_gap": metadata.get("mip_gap", ""),
+        "gurobi_node_count": metadata.get("node_count", ""),
+        "gurobi_solution_count": metadata.get("solution_count", ""),
+        "gurobi_time_limit_hit": metadata.get("time_limit_hit", ""),
     }
 
 
@@ -597,13 +645,15 @@ def compare_dasbench_mds_baselines(
     reference_csv: Path | None,
     timeout_seconds: float,
     max_workers: int,
+    gurobi_config: GurobiBaselineConfig | None = None,
 ) -> dict[str, object]:
     references = _load_reference_csv(reference_csv)
     problem = get_problem_definition("mds")
     registry = problem.baseline_registry()
-    unknown = [name for name in baseline_names if name not in registry]
+    available = sorted(set(registry) | {GUROBI_BASELINE_NAME})
+    unknown = [name for name in baseline_names if name not in available]
     if unknown:
-        raise ValueError(f"Unknown DasBench MDS baseline(s): {unknown}. Available: {sorted(registry)}")
+        raise ValueError(f"Unknown DasBench MDS baseline(s): {unknown}. Available: {available}")
 
     prepared_instances = _prepare_instances(
         relative_paths=relative_paths,
@@ -625,6 +675,7 @@ def compare_dasbench_mds_baselines(
                 output_dir=output_dir,
                 timeout_seconds=timeout_seconds,
                 reference=reference,
+                gurobi_config=gurobi_config,
             )
             for baseline_name, prepared, reference in tqdm(
                 jobs,
@@ -644,6 +695,7 @@ def compare_dasbench_mds_baselines(
                     output_dir=output_dir,
                     timeout_seconds=timeout_seconds,
                     reference=reference,
+                    gurobi_config=gurobi_config,
                 ): index
                 for index, (baseline_name, prepared, reference) in enumerate(jobs)
             }
@@ -666,6 +718,11 @@ def compare_dasbench_mds_baselines(
         "results_csv": str(results_csv),
         "reference_csv": str(reference_csv) if reference_csv is not None else None,
         "timeout_seconds": timeout_seconds,
+        "gurobi_config": (
+            (gurobi_config or GurobiBaselineConfig()).to_record()
+            if GUROBI_BASELINE_NAME in set(baseline_names)
+            else None
+        ),
         "max_workers": max_workers,
         "instances": relative_paths,
         **_summarize(rows),
@@ -698,6 +755,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="heuristic",
         help=(
             "Comma-separated DasBench MDS baseline names, or `heuristic` for the local greedy/redundancy baselines. "
+            f"Use `{GUROBI_BASELINE_NAME}` to run the time-limited Gurobi MDS formulation. "
             "Used only with --dasbench-mds-baselines."
         ),
     )
@@ -706,6 +764,34 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=300.0,
         help="Per-instance timeout for each in-process DasBench MDS baseline.",
+    )
+    parser.add_argument(
+        "--gurobi-time-limit-seconds",
+        type=float,
+        default=None,
+        help=(
+            f"Internal Gurobi TimeLimit used when --dasbench-baselines includes `{GUROBI_BASELINE_NAME}`. "
+            "Defaults to a value slightly below --dasbench-timeout-seconds so the process can return an incumbent."
+        ),
+    )
+    parser.add_argument(
+        "--gurobi-threads",
+        type=int,
+        default=1,
+        help=f"Gurobi Threads parameter used when --dasbench-baselines includes `{GUROBI_BASELINE_NAME}`.",
+    )
+    parser.add_argument(
+        "--gurobi-mip-gap",
+        type=float,
+        default=0.0,
+        help=f"Gurobi MIPGap parameter used when --dasbench-baselines includes `{GUROBI_BASELINE_NAME}`.",
+    )
+    parser.add_argument(
+        "--gurobi-output-flag",
+        type=int,
+        choices=[0, 1],
+        default=0,
+        help=f"Gurobi OutputFlag parameter used when --dasbench-baselines includes `{GUROBI_BASELINE_NAME}`.",
     )
     parser.add_argument("--track", choices=["heuristic", "exact"], default="heuristic")
     parser.add_argument("--source", choices=["private", "public"], default="private")
@@ -742,6 +828,19 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--max-workers must be at least 1.")
     relative_paths = _instance_paths_from_args(args)
     if args.dasbench_mds_baselines:
+        gurobi_time_limit_seconds = (
+            _default_gurobi_time_limit_seconds(args.dasbench_timeout_seconds)
+            if args.gurobi_time_limit_seconds is None
+            else args.gurobi_time_limit_seconds
+        )
+        gurobi_config = GurobiBaselineConfig(
+            enabled=True,
+            time_limit_seconds=gurobi_time_limit_seconds,
+            threads=args.gurobi_threads,
+            output_flag=args.gurobi_output_flag,
+            mip_gap=args.gurobi_mip_gap,
+            baseline_name=GUROBI_BASELINE_NAME,
+        )
         summary = compare_dasbench_mds_baselines(
             baseline_names=_dasbench_baselines_from_arg(args.dasbench_baselines),
             relative_paths=relative_paths,
@@ -752,6 +851,7 @@ def main(argv: list[str] | None = None) -> int:
             reference_csv=args.reference_csv,
             timeout_seconds=args.dasbench_timeout_seconds,
             max_workers=args.max_workers,
+            gurobi_config=gurobi_config,
         )
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0
