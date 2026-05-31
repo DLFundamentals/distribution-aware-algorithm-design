@@ -18,6 +18,9 @@ from dasbench.data import load_manifest, load_split
 from dasbench.problems import get_problem_definition
 from dasbench.problems.base import ScoreResult
 from dasbench.utils import load_jsonl, public_instance, write_json, write_jsonl
+from ml_baselines.attention_tsp import ATTENTION_TSP_BASELINE_NAME
+from ml_baselines.attention_tsp import fit as fit_attention_tsp
+from ml_baselines.attention_tsp import solve as solve_attention_tsp
 from ml_baselines.drl_mdkp import DRL_MDKP_BASELINE_NAME
 from ml_baselines.drl_mdkp import fit as fit_drl_mdkp
 from ml_baselines.drl_mdkp import solve as solve_drl_mdkp
@@ -232,6 +235,18 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
             metrics_path=metrics_path,
         ),
         solve=lambda problem, instance, state, config: solve_tsp(instance, state, config),
+    ),
+    ATTENTION_TSP_BASELINE_NAME: BaselineSpec(
+        name=ATTENTION_TSP_BASELINE_NAME,
+        problem="tsp",
+        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_attention_tsp(
+            train,
+            val,
+            config,
+            checkpoint_path=checkpoint_path,
+            metrics_path=metrics_path,
+        ),
+        solve=lambda problem, instance, state, config: solve_attention_tsp(instance, state, config),
     ),
 }
 

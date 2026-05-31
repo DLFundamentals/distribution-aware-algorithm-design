@@ -16,6 +16,7 @@ This package contains lightweight trainable baselines for DasBench distributions
 - `ml_packinglp_item_fraction`: item/resource MLP with learned resource prices, unsupervised fractional packing relaxation, scaling/projection and density fill.
 - `ml_pdl_packinglp`: self-supervised primal-dual packing LP model with item/resource message passing, primal fraction and dual multiplier heads, and deterministic projection/fill.
 - `ml_tsp_neural_constructor`: edge-heatmap MLP over pairwise city features, self-trained on cheap heuristic plus bounded 2-opt pseudo-label tours, learned/classical candidate construction plus bounded 2-opt.
+- `ml_attention_tsp`: compact Attention Model style Transformer encoder and pointer decoder over public city coordinates, trained with REINFORCE and a greedy rollout baseline, with optional bounded 2-opt.
 
 ## Runner
 
@@ -94,6 +95,12 @@ baselines:
     hidden_dim: 128
     candidates: 4
     two_opt_budget: 256
+  ml_attention_tsp:
+    embedding_dim: 128
+    n_heads: 8
+    n_encoder_layers: 3
+    inference_samples: 128
+    two_opt_budget: 0
 ```
 
 Validation-based selection is enabled with `--select-on-validation`. Provide a `search`, `hyperparameter_grid`, or per-baseline `baseline_search` list:
@@ -127,6 +134,7 @@ Each trial trains on the public train split, evaluates on validation, selects by
 | `ml_packinglp_item_fraction` | `epochs=50`, `hidden_dim=64`, `learning_rate=1e-3`, `violation_penalty=10.0`, `repair_budget=64`, `seed=0` |
 | `ml_pdl_packinglp` | `epochs=200`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `dual_learning_rate=1e-3`, `rho=10.0`, `rho_growth=1.05`, `repair_budget=128`, `seed=0` |
 | `ml_tsp_neural_constructor` | `epochs=50`, `hidden_dim=128`, `learning_rate=1e-3`, `candidates=4`, `two_opt_budget=256`, `seed=0` |
+| `ml_attention_tsp` | `epochs=100`, `steps_per_epoch=10`, `batch_size=128`, `embedding_dim=128`, `hidden_dim=128`, `n_heads=8`, `n_encoder_layers=3`, `learning_rate=1e-4`, `inference_samples=128`, `two_opt_budget=0`, `seed=0` |
 
 All baselines accept `device` and deterministic `seed` overrides.  Search/repair budgets are fixed by these config values and are not allowed to grow with solver progress.
 
@@ -173,7 +181,7 @@ is_valid,is_feasible,is_optimal,runtime_ms,error,solution
 
 - Models are intentionally small and one-instance-at-a-time; `batch_size` is accepted in configs but not fully batched yet.
 - Hyperparameter search is an explicit list, not a Cartesian product expander.
-- TSP uses an edge-heatmap self-training fallback rather than an attention/pointer decoder.
+- `ml_attention_tsp` is a compact Attention Model reproduction for Euclidean TSP; `ml_tsp_neural_constructor` remains a lightweight edge-heatmap self-training ablation.
 - PI-GNN MIS is distribution-trained for DasBench parity; the reference paper also studies per-instance optimization.
 - RL baselines (`ml_gnn_rl_mds`, `ml_drl_mdkp`) can need more training time and variance control than the smaller unsupervised score-repair baselines.
 - `ml_drl_mdkp` uses public heuristic initialization instead of the solver-assisted initialization described in the reference paper.

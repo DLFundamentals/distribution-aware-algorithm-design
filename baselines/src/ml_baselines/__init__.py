@@ -8,6 +8,14 @@ instances, then expose a plain solver callable compatible with
 
 from ml_baselines.checkpoint import load_checkpoint, save_checkpoint
 from ml_baselines.config import MLBaselineConfig
+from ml_baselines.attention_tsp import (
+    ATTENTION_TSP_BASELINE_NAME,
+    AttentionTSPConfig,
+    build_attention_tsp_baselines,
+    decode_attention_tsp,
+    normalize_points,
+    sample_tour,
+)
 from ml_baselines.data import (
     load_and_tensorize_train_validation,
     load_public_split,
@@ -109,6 +117,8 @@ from ml_baselines.tsp_neural_constructor import (
 
 __all__ = [
     "BaselineAdapter",
+    "ATTENTION_TSP_BASELINE_NAME",
+    "AttentionTSPConfig",
     "DRL_MDKP_BASELINE_NAME",
     "DRLMDKPConfig",
     "DominatingSetEnvironment",
@@ -141,6 +151,7 @@ __all__ = [
     "bounded_two_opt_from_matrix",
     "bounded_walksat_local_search",
     "build_drl_mdkp_baselines",
+    "build_attention_tsp_baselines",
     "build_gnn_rl_mds_baselines",
     "build_graph_score_repair_baselines",
     "build_item_resource_baselines",
@@ -151,6 +162,7 @@ __all__ = [
     "build_runcsp_maxsat_baselines",
     "build_tsp_neural_constructor_baselines",
     "decode_assignment",
+    "decode_attention_tsp",
     "decode_mdkp_scores",
     "decode_mds_scores",
     "decode_mis_scores",
@@ -168,9 +180,11 @@ __all__ = [
     "load_public_split",
     "load_public_train_validation",
     "mis_qubo_loss_from_probabilities",
+    "normalize_points",
     "project_and_fill_packinglp",
     "repair_dominating_set",
     "repair_mdkp_selection",
+    "sample_tour",
     "save_checkpoint",
     "seed_everything",
     "tensorize_graph_instance",

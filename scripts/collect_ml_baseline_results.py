@@ -192,8 +192,20 @@ BASELINE_DESCRIPTIONS = {
         "papers": [
             "[Vinyals, Fortunato, and Jaitly, 2015, Pointer Networks](https://arxiv.org/abs/1506.03134)",
             "[Bello et al., 2016, Neural Combinatorial Optimization with Reinforcement Learning](https://arxiv.org/abs/1611.09940)",
-            "[Kool, van Hoof, and Welling, 2019, Attention, Learn to Solve Routing Problems!](https://arxiv.org/abs/1803.08475)",
             "[Joshi, Laurent, and Bresson, 2019, An Efficient Graph Convolutional Network Technique for the Travelling Salesman Problem](https://arxiv.org/abs/1906.01227)",
+        ],
+    },
+    "ml_attention_tsp": {
+        "problem": "tsp",
+        "source": "baselines/src/ml_baselines/attention_tsp.py",
+        "learns": "An autoregressive pointer policy over public city coordinates using a compact Transformer encoder.",
+        "training": "Policy-gradient REINFORCE on sampled tours with a greedy rollout baseline; no optimum tours or test instances are used.",
+        "feasibility": "The decoder masks visited cities, returns a Hamiltonian permutation, samples a fixed number of candidates, and can apply bounded 2-opt.",
+        "defaults": "epochs=100, steps_per_epoch=10, batch_size=128, embedding_dim=128, n_heads=8, n_encoder_layers=3, lr=1e-4, inference_samples=128, two_opt_budget=0, seed=0",
+        "papers": [
+            "[Kool, van Hoof, and Welling, 2019, Attention, Learn to Solve Routing Problems!](https://arxiv.org/abs/1803.08475)",
+            "[Vinyals, Fortunato, and Jaitly, 2015, Pointer Networks](https://arxiv.org/abs/1506.03134)",
+            "[Bello et al., 2016, Neural Combinatorial Optimization with Reinforcement Learning](https://arxiv.org/abs/1611.09940)",
         ],
     },
 }

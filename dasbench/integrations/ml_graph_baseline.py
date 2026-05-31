@@ -207,14 +207,33 @@ def build_ml_tsp_baselines(
     if problem_name != "tsp" or not train_instances:
         return {}
     _ensure_baselines_src_on_path()
+    baselines: dict[str, object] = {}
     try:
         from ml_baselines.tsp_neural_constructor import build_tsp_neural_constructor_baselines
     except ImportError:
-        return {}
-    return build_tsp_neural_constructor_baselines(
-        problem_name,
-        train_instances,
-        validation_instances or [],
-        artifact_dir=artifact_dir,
-        config=config,
-    )
+        build_tsp_neural_constructor_baselines = None
+    if build_tsp_neural_constructor_baselines is not None:
+        baselines.update(
+            build_tsp_neural_constructor_baselines(
+                problem_name,
+                train_instances,
+                validation_instances or [],
+                artifact_dir=artifact_dir,
+                config=config,
+            )
+        )
+    try:
+        from ml_baselines.attention_tsp import build_attention_tsp_baselines
+    except ImportError:
+        build_attention_tsp_baselines = None
+    if build_attention_tsp_baselines is not None:
+        baselines.update(
+            build_attention_tsp_baselines(
+                problem_name,
+                train_instances,
+                validation_instances or [],
+                artifact_dir=artifact_dir,
+                config=config,
+            )
+        )
+    return baselines
