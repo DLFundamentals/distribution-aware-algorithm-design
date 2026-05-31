@@ -25,17 +25,37 @@ def build_ml_graph_baselines(
     if problem_name not in {"mis", "mds", "coloring"} or not train_instances:
         return {}
     _ensure_baselines_src_on_path()
+    baselines: dict[str, object] = {}
     try:
         from ml_baselines.graph_score_repair import build_graph_score_repair_baselines
     except ImportError:
-        return {}
-    return build_graph_score_repair_baselines(
-        problem_name,
-        train_instances,
-        validation_instances or [],
-        artifact_dir=artifact_dir,
-        config=config,
-    )
+        build_graph_score_repair_baselines = None
+    if build_graph_score_repair_baselines is not None:
+        baselines.update(
+            build_graph_score_repair_baselines(
+                problem_name,
+                train_instances,
+                validation_instances or [],
+                artifact_dir=artifact_dir,
+                config=config,
+            )
+        )
+    if problem_name == "coloring":
+        try:
+            from ml_baselines.pignn_coloring import build_pignn_coloring_baselines
+        except ImportError:
+            build_pignn_coloring_baselines = None
+        if build_pignn_coloring_baselines is not None:
+            baselines.update(
+                build_pignn_coloring_baselines(
+                    problem_name,
+                    train_instances,
+                    validation_instances or [],
+                    artifact_dir=artifact_dir,
+                    config=config,
+                )
+            )
+    return baselines
 
 
 def build_ml_maxsat_baselines(

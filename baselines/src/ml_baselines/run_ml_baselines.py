@@ -27,6 +27,9 @@ from ml_baselines.item_resource_baselines import solve as solve_item_resource
 from ml_baselines.maxsat_assignment import MAXSAT_BASELINE_NAME
 from ml_baselines.maxsat_assignment import fit as fit_maxsat
 from ml_baselines.maxsat_assignment import solve as solve_maxsat
+from ml_baselines.pignn_coloring import PIGNN_COLORING_BASELINE_NAME
+from ml_baselines.pignn_coloring import fit as fit_pignn_coloring
+from ml_baselines.pignn_coloring import solve as solve_pignn_coloring
 from ml_baselines.tsp_neural_constructor import TSP_BASELINE_NAME
 from ml_baselines.tsp_neural_constructor import fit as fit_tsp
 from ml_baselines.tsp_neural_constructor import solve as solve_tsp
@@ -93,18 +96,17 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
         ),
         solve=lambda problem, instance, state, config: solve_graph(problem, instance, state, config),
     ),
-    GRAPH_BASELINE_NAMES["coloring"]: BaselineSpec(
-        name=GRAPH_BASELINE_NAMES["coloring"],
+    PIGNN_COLORING_BASELINE_NAME: BaselineSpec(
+        name=PIGNN_COLORING_BASELINE_NAME,
         problem="coloring",
-        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_graph(
-            problem,
+        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_pignn_coloring(
             train,
             val,
             config,
             checkpoint_path=checkpoint_path,
             metrics_path=metrics_path,
         ),
-        solve=lambda problem, instance, state, config: solve_graph(problem, instance, state, config),
+        solve=lambda problem, instance, state, config: solve_pignn_coloring(instance, state, config),
     ),
     MAXSAT_BASELINE_NAME: BaselineSpec(
         name=MAXSAT_BASELINE_NAME,

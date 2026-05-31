@@ -17,7 +17,6 @@ from ml_baselines.torch_utils import TorchUnavailableError, require_torch, resol
 GRAPH_BASELINE_NAMES = {
     "mis": "ml_gnn_mis_score_repair",
     "mds": "ml_gnn_mds_score_repair",
-    "coloring": "ml_gnn_coloring_priority",
 }
 
 
@@ -35,7 +34,6 @@ class GraphScoreRepairConfig:
     entropy_weight: float = 0.005
     edge_penalty_weight: float = 2.0
     domination_penalty_weight: float = 4.0
-    coloring_pseudo_weight: float = 1.0
 
     @classmethod
     def from_config(cls, config: MLBaselineConfig | dict[str, Any] | None) -> "GraphScoreRepairConfig":
@@ -56,7 +54,6 @@ class GraphScoreRepairConfig:
             entropy_weight=float(payload.get("entropy_weight", base.entropy_weight)),
             edge_penalty_weight=float(payload.get("edge_penalty_weight", base.edge_penalty_weight)),
             domination_penalty_weight=float(payload.get("domination_penalty_weight", base.domination_penalty_weight)),
-            coloring_pseudo_weight=float(payload.get("coloring_pseudo_weight", base.coloring_pseudo_weight)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,7 +70,6 @@ class GraphScoreRepairConfig:
             "entropy_weight": self.entropy_weight,
             "edge_penalty_weight": self.edge_penalty_weight,
             "domination_penalty_weight": self.domination_penalty_weight,
-            "coloring_pseudo_weight": self.coloring_pseudo_weight,
         }
 
 
@@ -141,62 +137,6 @@ def decode_mds_scores(instance: dict[str, Any], scores: list[float], *, repair_b
     return sorted(selected)
 
 
-def _greedy_coloring_from_order(instance: dict[str, Any], order: list[int]) -> list[int]:
-    num_vertices = int(instance["num_vertices"])
-    adjacency = _adjacency(num_vertices, instance["edges"])
-    colors = [-1] * num_vertices
-    for vertex in order:
-        used = {colors[neighbor] for neighbor in adjacency[vertex] if colors[neighbor] >= 0}
-        color = 0
-        while color in used:
-            color += 1
-        colors[vertex] = color
-    return colors
-
-
-def _relabel_colors(colors: list[int]) -> list[int]:
-    relabel = {color: index for index, color in enumerate(sorted(set(colors)))}
-    return [relabel[color] for color in colors]
-
-
-def _try_recolor_down(instance: dict[str, Any], colors: list[int], *, budget: int) -> list[int]:
-    num_vertices = int(instance["num_vertices"])
-    adjacency = _adjacency(num_vertices, instance["edges"])
-    remaining_budget = max(0, int(budget))
-    while remaining_budget > 0 and colors:
-        improved = False
-        max_color = max(colors)
-        for vertex in [item for item in range(num_vertices) if colors[item] == max_color]:
-            current = colors[vertex]
-            for candidate_color in range(current):
-                if all(colors[neighbor] != candidate_color for neighbor in adjacency[vertex]):
-                    colors[vertex] = candidate_color
-                    improved = True
-                    break
-            remaining_budget -= 1
-            if remaining_budget <= 0:
-                break
-        colors = _relabel_colors(colors)
-        if not improved:
-            break
-    return colors
-
-
-def decode_coloring_scores(instance: dict[str, Any], scores: list[float], *, repair_budget: int = 64) -> list[int]:
-    num_vertices = int(instance["num_vertices"])
-    degrees = [0] * num_vertices
-    for raw_u, raw_v in instance["edges"]:
-        degrees[int(raw_u)] += 1
-        degrees[int(raw_v)] += 1
-    order = sorted(
-        range(num_vertices),
-        key=lambda vertex: (float(scores[vertex]), degrees[vertex], -vertex),
-        reverse=True,
-    )
-    colors = _greedy_coloring_from_order(instance, order)
-    return _try_recolor_down(instance, colors, budget=repair_budget)
-
-
 def _entropy(probabilities: Any) -> Any:
     torch = require_torch()
     clipped = probabilities.clamp(1e-6, 1.0 - 1e-6)
@@ -230,47 +170,6 @@ def _mds_loss(model: Any, tensor: Any, instance: dict[str, Any], config: GraphSc
     return probabilities.sum() + config.domination_penalty_weight * uncovered - config.entropy_weight * _entropy(probabilities)
 
 
-def _coloring_targets(instance: dict[str, Any], device: Any) -> Any:
-    torch = require_torch()
-    try:
-        from dasbench.problems.graph_utils import dsatur_coloring
-
-        colors = dsatur_coloring(instance)
-    except Exception:
-        colors = _greedy_coloring_from_order(instance, list(range(int(instance["num_vertices"]))))
-    degrees = [0] * int(instance["num_vertices"])
-    for raw_u, raw_v in instance["edges"]:
-        degrees[int(raw_u)] += 1
-        degrees[int(raw_v)] += 1
-    max_color = max(colors) if colors else 0
-    max_degree = max(degrees) if degrees else 1
-    targets = [
-        float(max_color - colors[vertex]) + 0.1 * float(degrees[vertex]) / max(float(max_degree), 1.0)
-        for vertex in range(len(colors))
-    ]
-    if targets:
-        minimum = min(targets)
-        scale = max(max(targets) - minimum, 1e-9)
-        targets = [(value - minimum) / scale for value in targets]
-    return torch.tensor(targets, dtype=torch.float32, device=device)
-
-
-def _coloring_loss(model: Any, tensor: Any, instance: dict[str, Any], config: GraphScoreRepairConfig) -> Any:
-    torch = require_torch()
-    logits = model(tensor.node_features, tensor.edge_index).reshape(-1)
-    target = _coloring_targets(instance, logits.device)
-    mse = torch.mean((logits - target) ** 2)
-    if tensor.edge_index.numel() == 0:
-        return mse
-    sources = tensor.edge_index[0]
-    targets = tensor.edge_index[1]
-    mask = sources < targets
-    if not bool(mask.any()):
-        return mse
-    edge_margin = torch.relu(0.05 - torch.abs(logits[sources[mask]] - logits[targets[mask]])).mean()
-    return config.coloring_pseudo_weight * mse + edge_margin
-
-
 def _loss_for_problem(
     problem_name: str,
     model: Any,
@@ -282,8 +181,6 @@ def _loss_for_problem(
         return _mis_loss(model, tensor, config)
     if problem_name == "mds":
         return _mds_loss(model, tensor, instance, config)
-    if problem_name == "coloring":
-        return _coloring_loss(model, tensor, instance, config)
     raise ValueError(f"Unsupported graph ML problem: {problem_name}")
 
 
@@ -383,8 +280,6 @@ def solve(
         return decode_mis_scores(instance, scores, repair_budget=resolved_config.repair_budget)
     if problem_name == "mds":
         return decode_mds_scores(instance, scores, repair_budget=resolved_config.repair_budget)
-    if problem_name == "coloring":
-        return decode_coloring_scores(instance, scores, repair_budget=resolved_config.repair_budget)
     raise ValueError(f"Unsupported graph ML problem: {problem_name}")
 
 

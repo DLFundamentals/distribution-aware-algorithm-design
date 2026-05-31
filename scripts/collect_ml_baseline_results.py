@@ -72,18 +72,16 @@ BASELINE_DESCRIPTIONS = {
             "[Learning-Based Heuristic for Combinatorial Optimization of the Minimum Dominating Set Problem using Graph Convolutional Networks, 2023](https://arxiv.org/abs/2306.03434)",
         ],
     },
-    "ml_gnn_coloring_priority": {
+    "ml_pignn_coloring": {
         "problem": "coloring",
-        "source": "baselines/src/ml_baselines/graph_score_repair.py",
-        "learns": "Node ordering priorities for greedy coloring.",
-        "training": "Self-training with DSATUR-derived pseudo-priority labels plus a small adjacent-priority separation proxy.",
-        "feasibility": "Learned-order greedy coloring always assigns a color; bounded recoloring tries to reduce color count.",
-        "defaults": "epochs=50, hidden_dim=64, layers=3, lr=1e-3, repair_budget=64, seed=0",
+        "source": "baselines/src/ml_baselines/pignn_coloring.py",
+        "learns": "Per-node color logits for a fixed color budget using graph message passing.",
+        "training": "Unsupervised Potts-model conflict loss over adjacent same-color probabilities with entropy annealing.",
+        "feasibility": "Tries decreasing color counts with deterministic fixed-k greedy/repair decoding and falls back to DSATUR for validity.",
+        "defaults": "epochs=100, hidden_dim=64, layers=3, lr=1e-3, inference_restarts=8, repair_budget=256, seed=0",
         "papers": [
-            "[Brelaz, 1979, New methods to color the vertices of a graph](https://doi.org/10.1145/359094.359101)",
-            "[Lemos et al., 2019, Graph Colouring Meets Deep Learning: Effective Graph Neural Network Models for Combinatorial Problems](https://arxiv.org/abs/1903.04598)",
-            "[Vinyals-style node-labeling lineage: Learning Combinatorial Node Labeling Algorithms, 2021](https://arxiv.org/abs/2106.03594)",
-            "[Graph Neural Networks as Ordering Heuristics for Parallel Graph Coloring, 2024](https://arxiv.org/abs/2408.05054)",
+            "[Schuetz, Brubaker, Zhu, and Katzgraber, 2022, Graph Coloring with Physics-Inspired Graph Neural Networks](https://journals.aps.org/prresearch/abstract/10.1103/PhysRevResearch.4.043131)",
+            "[Schuetz et al., 2022, arXiv preprint](https://arxiv.org/abs/2202.01606)",
         ],
     },
     "ml_gnn_maxsat_assignment": {

@@ -18,7 +18,6 @@ from ml_baselines.data import (
 from ml_baselines.graph_score_repair import (
     GraphScoreRepairConfig,
     build_graph_score_repair_baselines,
-    decode_coloring_scores,
     decode_mds_scores,
     decode_mis_scores,
 )
@@ -37,6 +36,13 @@ from ml_baselines.maxsat_assignment import (
     bounded_maxsat_local_search,
     build_maxsat_assignment_baselines,
     decode_assignment,
+)
+from ml_baselines.pignn_coloring import (
+    PIGNN_COLORING_BASELINE_NAME,
+    PiGNNColoringConfig,
+    build_pignn_coloring_baselines,
+    decode_fixed_k_coloring,
+    decode_pignn_coloring,
 )
 from ml_baselines.seeding import seed_everything
 from ml_baselines.tensorize import (
@@ -73,7 +79,9 @@ __all__ = [
     "MaxSatTensor",
     "MaxSatAssignmentConfig",
     "PACKINGLP_BASELINE_NAME",
+    "PIGNN_COLORING_BASELINE_NAME",
     "PackingTensor",
+    "PiGNNColoringConfig",
     "TrainedState",
     "TSP_BASELINE_NAME",
     "TspTensor",
@@ -83,13 +91,15 @@ __all__ = [
     "build_graph_score_repair_baselines",
     "build_item_resource_baselines",
     "build_maxsat_assignment_baselines",
+    "build_pignn_coloring_baselines",
     "build_tsp_neural_constructor_baselines",
-    "decode_coloring_scores",
     "decode_assignment",
     "decode_mdkp_scores",
     "decode_mds_scores",
     "decode_mis_scores",
     "decode_packinglp_fractions",
+    "decode_fixed_k_coloring",
+    "decode_pignn_coloring",
     "decode_tsp_heatmap",
     "load_checkpoint",
     "load_and_tensorize_train_validation",

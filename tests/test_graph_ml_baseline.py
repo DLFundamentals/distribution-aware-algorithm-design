@@ -13,7 +13,6 @@ from dasbench.problems import get_problem_definition
 from ml_baselines.graph_score_repair import (
     GraphScoreRepairConfig,
     build_graph_score_repair_baselines,
-    decode_coloring_scores,
     decode_mds_scores,
     decode_mis_scores,
 )
@@ -54,21 +53,6 @@ class GraphMLDecoderTests(unittest.TestCase):
                 solution = decode_mds_scores(instance, [1.0, 0.5, 0.4, 0.3, 0.2])
                 _assert_valid("mds", instance, solution)
 
-    def test_coloring_decoding_repairs_odd_cycle_and_clique(self) -> None:
-        instances = [
-            {"id": "odd-cycle", "num_vertices": 5, "edges": [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0]]},
-            {
-                "id": "clique",
-                "num_vertices": 4,
-                "edges": [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]],
-            },
-        ]
-        for instance in instances:
-            with self.subTest(instance=instance["id"]):
-                solution = decode_coloring_scores(instance, [0.2, 1.0, 0.4, 0.8, 0.6][: int(instance["num_vertices"])])
-                _assert_valid("coloring", instance, solution)
-
-
 @unittest.skipUnless(torch_available(), "PyTorch is not installed in this environment.")
 class GraphMLEndToEndSmokeTests(unittest.TestCase):
     def test_builders_fit_and_solve_tiny_graphs(self) -> None:
@@ -76,11 +60,6 @@ class GraphMLEndToEndSmokeTests(unittest.TestCase):
         cases = {
             "mis": {"id": "path", "num_vertices": 4, "edges": [[0, 1], [1, 2], [2, 3]]},
             "mds": {"id": "star", "num_vertices": 5, "edges": [[0, 1], [0, 2], [0, 3], [0, 4]]},
-            "coloring": {
-                "id": "odd-cycle",
-                "num_vertices": 5,
-                "edges": [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0]],
-            },
         }
         with tempfile.TemporaryDirectory(prefix="graph-ml-baseline-") as root:
             root_path = Path(root)

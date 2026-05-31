@@ -6,7 +6,7 @@ This package contains lightweight trainable baselines for DasBench distributions
 
 - `ml_gnn_mis_score_repair`: manual PyTorch message passing over graph features, unsupervised independent-set loss, greedy feasible repair.
 - `ml_gnn_mds_score_repair`: manual PyTorch message passing, unsupervised domination loss, greedy cover/prune repair.
-- `ml_gnn_coloring_priority`: graph message passing trained on DSATUR pseudo-priority labels, learned-order greedy coloring, bounded recoloring.
+- `ml_pignn_coloring`: physics-inspired graph coloring baseline with a Potts-model conflict loss over color logits, fixed-budget repair, and DSATUR feasibility fallback.
 - `ml_gnn_maxsat_assignment`: variable-clause bipartite message passing, soft expected-satisfied-clause objective, threshold/sample/polarity seeds plus bounded flips.
 - `ml_mdkp_item_scorer`: item/resource MLP with learned resource prices, Lagrangian-style unsupervised binary relaxation, greedy add/drop/swap repair.
 - `ml_packinglp_item_fraction`: item/resource MLP with learned resource prices, unsupervised fractional packing relaxation, scaling/projection and density fill.
@@ -112,7 +112,7 @@ Each trial trains on the public train split, evaluates on validation, selects by
 | --- | --- |
 | `ml_gnn_mis_score_repair` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `inference_restarts=4`, `repair_budget=64`, `seed=0` |
 | `ml_gnn_mds_score_repair` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `inference_restarts=4`, `repair_budget=64`, `seed=0` |
-| `ml_gnn_coloring_priority` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `repair_budget=64`, `seed=0` |
+| `ml_pignn_coloring` | `epochs=100`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `inference_restarts=8`, `repair_budget=256`, `temperature_start=1.0`, `temperature_end=0.2`, `seed=0` |
 | `ml_gnn_maxsat_assignment` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `samples=8`, `walksat_flips=1000`, `seed=0` |
 | `ml_mdkp_item_scorer` | `epochs=50`, `hidden_dim=64`, `learning_rate=1e-3`, `violation_penalty=10.0`, `repair_budget=64`, `seed=0` |
 | `ml_packinglp_item_fraction` | `epochs=50`, `hidden_dim=64`, `learning_rate=1e-3`, `violation_penalty=10.0`, `repair_budget=64`, `seed=0` |
