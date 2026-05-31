@@ -121,6 +121,18 @@ BASELINE_DESCRIPTIONS = {
             "[A Deep Reinforcement Learning-Based Scheme for Solving Multiple Knapsack Problems, 2022](https://www.mdpi.com/2076-3417/12/6/3068)",
         ],
     },
+    "ml_drl_mdkp": {
+        "problem": "mdkp",
+        "source": "baselines/src/ml_baselines/drl_mdkp.py",
+        "learns": "A sequential feasible-item selection policy with item encodings, residual-capacity context, and an actor-critic value head.",
+        "training": "Public-data actor-critic rollouts reward feasible value gains; no exact/solver labels or hidden optima are used.",
+        "feasibility": "Invalid item actions are masked, inference starts from empty and public heuristic solutions, and bounded add/drop/swap repair enforces feasibility.",
+        "defaults": "episodes=5000, hidden_dim=128, lr=3e-4, gamma=1.0, entropy_coef=0.01, value_coef=0.5, repair_budget=128, seed=0",
+        "papers": [
+            "[Bushaj and Buyuktahtakin, 2024, A K-means Supported Reinforcement Learning Framework to Multi-dimensional Knapsack](https://link.springer.com/article/10.1007/s10898-024-01364-6)",
+            "[Bello et al., 2016, Neural Combinatorial Optimization with Reinforcement Learning](https://arxiv.org/abs/1611.09940)",
+        ],
+    },
     "ml_packinglp_item_fraction": {
         "problem": "packing_lp",
         "source": "baselines/src/ml_baselines/item_resource_baselines.py",

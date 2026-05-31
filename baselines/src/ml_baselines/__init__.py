@@ -15,6 +15,15 @@ from ml_baselines.data import (
     tensorize_instances,
     tensorize_train_validation,
 )
+from ml_baselines.drl_mdkp import (
+    DRL_MDKP_BASELINE_NAME,
+    DRLMDKPConfig,
+    MDKPEnvironment,
+    build_drl_mdkp_baselines,
+    heuristic_feasible_solution,
+    item_worth_order,
+    repair_mdkp_selection,
+)
 from ml_baselines.graph_score_repair import (
     GraphScoreRepairConfig,
     build_graph_score_repair_baselines,
@@ -79,12 +88,15 @@ from ml_baselines.tsp_neural_constructor import (
 
 __all__ = [
     "BaselineAdapter",
+    "DRL_MDKP_BASELINE_NAME",
+    "DRLMDKPConfig",
     "GraphScoreRepairConfig",
     "GraphTensor",
     "ItemResourceConfig",
     "MLBaselineConfig",
     "MAXSAT_BASELINE_NAME",
     "MDKP_BASELINE_NAME",
+    "MDKPEnvironment",
     "MaxSatTensor",
     "MaxSatAssignmentConfig",
     "PACKINGLP_BASELINE_NAME",
@@ -100,6 +112,7 @@ __all__ = [
     "bounded_maxsat_local_search",
     "bounded_two_opt_from_matrix",
     "bounded_walksat_local_search",
+    "build_drl_mdkp_baselines",
     "build_graph_score_repair_baselines",
     "build_item_resource_baselines",
     "build_maxsat_assignment_baselines",
@@ -115,10 +128,13 @@ __all__ = [
     "decode_pignn_coloring",
     "decode_runcsp_assignment",
     "decode_tsp_heatmap",
+    "heuristic_feasible_solution",
+    "item_worth_order",
     "load_checkpoint",
     "load_and_tensorize_train_validation",
     "load_public_split",
     "load_public_train_validation",
+    "repair_mdkp_selection",
     "save_checkpoint",
     "seed_everything",
     "tensorize_graph_instance",

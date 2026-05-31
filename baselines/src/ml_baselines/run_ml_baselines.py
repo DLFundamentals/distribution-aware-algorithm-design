@@ -18,6 +18,9 @@ from dasbench.data import load_manifest, load_split
 from dasbench.problems import get_problem_definition
 from dasbench.problems.base import ScoreResult
 from dasbench.utils import load_jsonl, public_instance, write_json, write_jsonl
+from ml_baselines.drl_mdkp import DRL_MDKP_BASELINE_NAME
+from ml_baselines.drl_mdkp import fit as fit_drl_mdkp
+from ml_baselines.drl_mdkp import solve as solve_drl_mdkp
 from ml_baselines.graph_score_repair import GRAPH_BASELINE_NAMES
 from ml_baselines.graph_score_repair import fit as fit_graph
 from ml_baselines.graph_score_repair import solve as solve_graph
@@ -147,6 +150,18 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
             metrics_path=metrics_path,
         ),
         solve=lambda problem, instance, state, config: solve_item_resource(problem, instance, state, config),
+    ),
+    DRL_MDKP_BASELINE_NAME: BaselineSpec(
+        name=DRL_MDKP_BASELINE_NAME,
+        problem="mdkp",
+        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_drl_mdkp(
+            train,
+            val,
+            config,
+            checkpoint_path=checkpoint_path,
+            metrics_path=metrics_path,
+        ),
+        solve=lambda problem, instance, state, config: solve_drl_mdkp(instance, state, config),
     ),
     PACKINGLP_BASELINE_NAME: BaselineSpec(
         name=PACKINGLP_BASELINE_NAME,

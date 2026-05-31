@@ -116,17 +116,37 @@ def build_ml_item_resource_baselines(
     if problem_name not in {"mdkp", "packing_lp"} or not train_instances:
         return {}
     _ensure_baselines_src_on_path()
+    baselines: dict[str, object] = {}
     try:
         from ml_baselines.item_resource_baselines import build_item_resource_baselines
     except ImportError:
-        return {}
-    return build_item_resource_baselines(
-        problem_name,
-        train_instances,
-        validation_instances or [],
-        artifact_dir=artifact_dir,
-        config=config,
-    )
+        build_item_resource_baselines = None
+    if build_item_resource_baselines is not None:
+        baselines.update(
+            build_item_resource_baselines(
+                problem_name,
+                train_instances,
+                validation_instances or [],
+                artifact_dir=artifact_dir,
+                config=config,
+            )
+        )
+    if problem_name == "mdkp":
+        try:
+            from ml_baselines.drl_mdkp import build_drl_mdkp_baselines
+        except ImportError:
+            build_drl_mdkp_baselines = None
+        if build_drl_mdkp_baselines is not None:
+            baselines.update(
+                build_drl_mdkp_baselines(
+                    problem_name,
+                    train_instances,
+                    validation_instances or [],
+                    artifact_dir=artifact_dir,
+                    config=config,
+                )
+            )
+    return baselines
 
 
 def build_ml_tsp_baselines(

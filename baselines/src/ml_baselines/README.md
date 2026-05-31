@@ -10,6 +10,7 @@ This package contains lightweight trainable baselines for DasBench distributions
 - `ml_gnn_maxsat_assignment`: variable-clause bipartite message passing, soft expected-satisfied-clause objective, threshold/sample/polarity seeds plus bounded flips.
 - `ml_runcsp_maxsat`: RUN-CSP-style recurrent variable/factor message passing for MaxSAT, unsupervised expected satisfied-clause loss, and bounded stochastic WalkSAT decoding.
 - `ml_mdkp_item_scorer`: item/resource MLP with learned resource prices, Lagrangian-style unsupervised binary relaxation, greedy add/drop/swap repair.
+- `ml_drl_mdkp`: actor-critic sequential MDKP constructor trained with public-data rewards, public heuristic initialization at inference, masked feasible item actions, and bounded repair.
 - `ml_packinglp_item_fraction`: item/resource MLP with learned resource prices, unsupervised fractional packing relaxation, scaling/projection and density fill.
 - `ml_tsp_neural_constructor`: edge-heatmap MLP over pairwise city features, self-trained on cheap heuristic plus bounded 2-opt pseudo-label tours, learned/classical candidate construction plus bounded 2-opt.
 
@@ -117,6 +118,7 @@ Each trial trains on the public train split, evaluates on validation, selects by
 | `ml_gnn_maxsat_assignment` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `samples=8`, `walksat_flips=1000`, `seed=0` |
 | `ml_runcsp_maxsat` | `epochs=100`, `hidden_dim=64`, `message_passing_steps=16`, `recurrent_layers=1`, `learning_rate=1e-3`, `samples=16`, `walksat_restarts=4`, `walksat_flips=1000`, `noise=0.1`, `seed=0` |
 | `ml_mdkp_item_scorer` | `epochs=50`, `hidden_dim=64`, `learning_rate=1e-3`, `violation_penalty=10.0`, `repair_budget=64`, `seed=0` |
+| `ml_drl_mdkp` | `episodes=5000`, `hidden_dim=128`, `learning_rate=3e-4`, `gamma=1.0`, `entropy_coef=0.01`, `value_coef=0.5`, `max_episode_steps=2*num_items`, `repair_budget=128`, `seed=0` |
 | `ml_packinglp_item_fraction` | `epochs=50`, `hidden_dim=64`, `learning_rate=1e-3`, `violation_penalty=10.0`, `repair_budget=64`, `seed=0` |
 | `ml_tsp_neural_constructor` | `epochs=50`, `hidden_dim=128`, `learning_rate=1e-3`, `candidates=4`, `two_opt_budget=256`, `seed=0` |
 
@@ -166,5 +168,6 @@ is_valid,is_feasible,is_optimal,runtime_ms,error,solution
 - Models are intentionally small and one-instance-at-a-time; `batch_size` is accepted in configs but not fully batched yet.
 - Hyperparameter search is an explicit list, not a Cartesian product expander.
 - TSP uses an edge-heatmap self-training fallback rather than an attention/pointer decoder.
+- `ml_drl_mdkp` uses public heuristic initialization instead of the solver-assisted initialization described in the reference paper.
 - Checkpoints are saved for reproducibility, but the runner retrains for each invocation rather than loading old checkpoints automatically.
 - Validation/test scoring requires generated split files with the usual scorer metadata, including optima where the problem scorer expects them.
