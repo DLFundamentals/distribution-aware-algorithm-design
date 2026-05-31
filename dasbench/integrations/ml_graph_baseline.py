@@ -176,6 +176,21 @@ def build_ml_item_resource_baselines(
                     config=config,
                 )
             )
+    if problem_name == "packing_lp":
+        try:
+            from ml_baselines.pdl_packinglp import build_pdl_packinglp_baselines
+        except ImportError:
+            build_pdl_packinglp_baselines = None
+        if build_pdl_packinglp_baselines is not None:
+            baselines.update(
+                build_pdl_packinglp_baselines(
+                    problem_name,
+                    train_instances,
+                    validation_instances or [],
+                    artifact_dir=artifact_dir,
+                    config=config,
+                )
+            )
     return baselines
 
 

@@ -39,6 +39,9 @@ from ml_baselines.pignn_coloring import solve as solve_pignn_coloring
 from ml_baselines.pignn_mis import PIGNN_MIS_BASELINE_NAME
 from ml_baselines.pignn_mis import fit as fit_pignn_mis
 from ml_baselines.pignn_mis import solve as solve_pignn_mis
+from ml_baselines.pdl_packinglp import PDL_PACKINGLP_BASELINE_NAME
+from ml_baselines.pdl_packinglp import fit as fit_pdl_packinglp
+from ml_baselines.pdl_packinglp import solve as solve_pdl_packinglp
 from ml_baselines.runcsp_maxsat import RUN_CSP_MAXSAT_BASELINE_NAME
 from ml_baselines.runcsp_maxsat import fit as fit_runcsp_maxsat
 from ml_baselines.runcsp_maxsat import solve as solve_runcsp_maxsat
@@ -205,6 +208,18 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
             metrics_path=metrics_path,
         ),
         solve=lambda problem, instance, state, config: solve_item_resource(problem, instance, state, config),
+    ),
+    PDL_PACKINGLP_BASELINE_NAME: BaselineSpec(
+        name=PDL_PACKINGLP_BASELINE_NAME,
+        problem="packing_lp",
+        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_pdl_packinglp(
+            train,
+            val,
+            config,
+            checkpoint_path=checkpoint_path,
+            metrics_path=metrics_path,
+        ),
+        solve=lambda problem, instance, state, config: solve_pdl_packinglp(instance, state, config),
     ),
     TSP_BASELINE_NAME: BaselineSpec(
         name=TSP_BASELINE_NAME,

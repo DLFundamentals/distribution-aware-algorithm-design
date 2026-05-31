@@ -170,6 +170,18 @@ BASELINE_DESCRIPTIONS = {
             "[Buchbinder and Naor, 2009, Online Primal-Dual Algorithms for Covering and Packing](https://pubsonline.informs.org/doi/10.1287/moor.1080.0363)",
         ],
     },
+    "ml_pdl_packinglp": {
+        "problem": "packing_lp",
+        "source": "baselines/src/ml_baselines/pdl_packinglp.py",
+        "learns": "Primal item fractions and nonnegative dual resource multipliers using item/resource message passing.",
+        "training": "Self-supervised primal-dual loss combines primal objective, dual-weighted violation, augmented penalty, dual feasibility, and gap terms.",
+        "feasibility": "Predicted fractions are clamped, capacity-scaled if needed, and greedily filled under a fixed repair budget.",
+        "defaults": "epochs=200, hidden_dim=64, layers=3, lr=1e-3, dual_lr=1e-3, rho=10.0, rho_growth=1.05, repair_budget=128, seed=0",
+        "papers": [
+            "[Park and Van Hentenryck, 2023, Self-Supervised Primal-Dual Learning for Constrained Optimization](https://ojs.aaai.org/index.php/AAAI/article/view/25520)",
+            "[Park and Van Hentenryck, 2022, arXiv preprint](https://arxiv.org/abs/2208.09046)",
+        ],
+    },
     "ml_tsp_neural_constructor": {
         "problem": "tsp",
         "source": "baselines/src/ml_baselines/tsp_neural_constructor.py",
