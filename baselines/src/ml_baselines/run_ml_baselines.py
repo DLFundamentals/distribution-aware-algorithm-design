@@ -30,6 +30,9 @@ from ml_baselines.maxsat_assignment import solve as solve_maxsat
 from ml_baselines.pignn_coloring import PIGNN_COLORING_BASELINE_NAME
 from ml_baselines.pignn_coloring import fit as fit_pignn_coloring
 from ml_baselines.pignn_coloring import solve as solve_pignn_coloring
+from ml_baselines.runcsp_maxsat import RUN_CSP_MAXSAT_BASELINE_NAME
+from ml_baselines.runcsp_maxsat import fit as fit_runcsp_maxsat
+from ml_baselines.runcsp_maxsat import solve as solve_runcsp_maxsat
 from ml_baselines.tsp_neural_constructor import TSP_BASELINE_NAME
 from ml_baselines.tsp_neural_constructor import fit as fit_tsp
 from ml_baselines.tsp_neural_constructor import solve as solve_tsp
@@ -119,6 +122,18 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
             metrics_path=metrics_path,
         ),
         solve=lambda problem, instance, state, config: solve_maxsat(instance, state, config),
+    ),
+    RUN_CSP_MAXSAT_BASELINE_NAME: BaselineSpec(
+        name=RUN_CSP_MAXSAT_BASELINE_NAME,
+        problem="maxsat",
+        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_runcsp_maxsat(
+            train,
+            val,
+            config,
+            checkpoint_path=checkpoint_path,
+            metrics_path=metrics_path,
+        ),
+        solve=lambda problem, instance, state, config: solve_runcsp_maxsat(instance, state, config),
     ),
     MDKP_BASELINE_NAME: BaselineSpec(
         name=MDKP_BASELINE_NAME,

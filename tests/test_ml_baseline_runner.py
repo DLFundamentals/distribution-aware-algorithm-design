@@ -56,6 +56,8 @@ class MLBaselineRunnerTests(unittest.TestCase):
                     "baselines.src.ml_baselines.run_ml_baselines",
                     "--problem",
                     "maxsat",
+                    "--baseline",
+                    "ml_gnn_maxsat_assignment",
                     "--train-split",
                     str(split_dir / "train.jsonl"),
                     "--validation-split",

@@ -92,10 +92,20 @@ BASELINE_DESCRIPTIONS = {
         "feasibility": "Threshold, Bernoulli, and polarity-majority seeds are scored exactly and improved with bounded variable flips.",
         "defaults": "epochs=50, hidden_dim=64, layers=3, lr=1e-3, samples=8, walksat_flips=1000, seed=0",
         "papers": [
-            "[Selsam et al., 2018, Learning a SAT Solver from Single-Bit Supervision / NeuroSAT](https://arxiv.org/abs/1802.03685)",
             "[Selman, Kautz, and Cohen, 1993/1996, Local search strategies for satisfiability testing](https://dblp.org/rec/conf/dimacs/SelmanKC93)",
-            "[Toenshoff et al., 2020, Graph Neural Networks for Maximum Constraint Satisfaction](https://www.frontiersin.org/articles/10.3389/frai.2020.580607/full)",
             "[Khalil et al., 2017, Learning Combinatorial Optimization Algorithms over Graphs](https://papers.neurips.cc/paper/7214-learning-combinatorial-optimization-algorithms-over-graphs)",
+        ],
+    },
+    "ml_runcsp_maxsat": {
+        "problem": "maxsat",
+        "source": "baselines/src/ml_baselines/runcsp_maxsat.py",
+        "learns": "Boolean variable assignment probabilities using shared recurrent variable/factor message passing over signed clause incidences.",
+        "training": "Unsupervised RUN-CSP-style expected weighted satisfied-clause objective with entropy annealing and late binarization.",
+        "feasibility": "Threshold, polarity, and Bernoulli candidates are scored exactly and improved by bounded stochastic WalkSAT flips.",
+        "defaults": "epochs=100, hidden_dim=64, message_passing_steps=16, recurrent_layers=1, lr=1e-3, samples=16, walksat_restarts=4, walksat_flips=1000, noise=0.1, seed=0",
+        "papers": [
+            "[Toenshoff et al., 2020, Graph Neural Networks for Maximum Constraint Satisfaction](https://www.frontiersin.org/articles/10.3389/frai.2020.580607/full)",
+            "[Selman, Kautz, and Cohen, 1993/1996, Local search strategies for satisfiability testing](https://dblp.org/rec/conf/dimacs/SelmanKC93)",
         ],
     },
     "ml_mdkp_item_scorer": {

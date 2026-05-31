@@ -71,17 +71,36 @@ def build_ml_maxsat_baselines(
     if problem_name != "maxsat" or not train_instances:
         return {}
     _ensure_baselines_src_on_path()
+    baselines: dict[str, object] = {}
     try:
         from ml_baselines.maxsat_assignment import build_maxsat_assignment_baselines
     except ImportError:
-        return {}
-    return build_maxsat_assignment_baselines(
-        problem_name,
-        train_instances,
-        validation_instances or [],
-        artifact_dir=artifact_dir,
-        config=config,
-    )
+        build_maxsat_assignment_baselines = None
+    if build_maxsat_assignment_baselines is not None:
+        baselines.update(
+            build_maxsat_assignment_baselines(
+                problem_name,
+                train_instances,
+                validation_instances or [],
+                artifact_dir=artifact_dir,
+                config=config,
+            )
+        )
+    try:
+        from ml_baselines.runcsp_maxsat import build_runcsp_maxsat_baselines
+    except ImportError:
+        build_runcsp_maxsat_baselines = None
+    if build_runcsp_maxsat_baselines is not None:
+        baselines.update(
+            build_runcsp_maxsat_baselines(
+                problem_name,
+                train_instances,
+                validation_instances or [],
+                artifact_dir=artifact_dir,
+                config=config,
+            )
+        )
+    return baselines
 
 
 def build_ml_item_resource_baselines(

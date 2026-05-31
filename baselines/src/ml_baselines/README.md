@@ -8,6 +8,7 @@ This package contains lightweight trainable baselines for DasBench distributions
 - `ml_gnn_mds_score_repair`: manual PyTorch message passing, unsupervised domination loss, greedy cover/prune repair.
 - `ml_pignn_coloring`: physics-inspired graph coloring baseline with a Potts-model conflict loss over color logits, fixed-budget repair, and DSATUR feasibility fallback.
 - `ml_gnn_maxsat_assignment`: variable-clause bipartite message passing, soft expected-satisfied-clause objective, threshold/sample/polarity seeds plus bounded flips.
+- `ml_runcsp_maxsat`: RUN-CSP-style recurrent variable/factor message passing for MaxSAT, unsupervised expected satisfied-clause loss, and bounded stochastic WalkSAT decoding.
 - `ml_mdkp_item_scorer`: item/resource MLP with learned resource prices, Lagrangian-style unsupervised binary relaxation, greedy add/drop/swap repair.
 - `ml_packinglp_item_fraction`: item/resource MLP with learned resource prices, unsupervised fractional packing relaxation, scaling/projection and density fill.
 - `ml_tsp_neural_constructor`: edge-heatmap MLP over pairwise city features, self-trained on cheap heuristic plus bounded 2-opt pseudo-label tours, learned/classical candidate construction plus bounded 2-opt.
@@ -114,6 +115,7 @@ Each trial trains on the public train split, evaluates on validation, selects by
 | `ml_gnn_mds_score_repair` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `inference_restarts=4`, `repair_budget=64`, `seed=0` |
 | `ml_pignn_coloring` | `epochs=100`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `inference_restarts=8`, `repair_budget=256`, `temperature_start=1.0`, `temperature_end=0.2`, `seed=0` |
 | `ml_gnn_maxsat_assignment` | `epochs=50`, `hidden_dim=64`, `layers=3`, `learning_rate=1e-3`, `samples=8`, `walksat_flips=1000`, `seed=0` |
+| `ml_runcsp_maxsat` | `epochs=100`, `hidden_dim=64`, `message_passing_steps=16`, `recurrent_layers=1`, `learning_rate=1e-3`, `samples=16`, `walksat_restarts=4`, `walksat_flips=1000`, `noise=0.1`, `seed=0` |
 | `ml_mdkp_item_scorer` | `epochs=50`, `hidden_dim=64`, `learning_rate=1e-3`, `violation_penalty=10.0`, `repair_budget=64`, `seed=0` |
 | `ml_packinglp_item_fraction` | `epochs=50`, `hidden_dim=64`, `learning_rate=1e-3`, `violation_penalty=10.0`, `repair_budget=64`, `seed=0` |
 | `ml_tsp_neural_constructor` | `epochs=50`, `hidden_dim=128`, `learning_rate=1e-3`, `candidates=4`, `two_opt_budget=256`, `seed=0` |
