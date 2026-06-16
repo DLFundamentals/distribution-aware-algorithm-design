@@ -51,6 +51,58 @@ OPENAI_REASONING_EFFORT=xhigh
 # OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
+### Local vLLM Server
+
+DasBench can use a local vLLM OpenAI-compatible server through the alternate
+chat provider path. The server environment is intentionally separate from the
+main project environment because vLLM carries a large CUDA/PyTorch dependency
+stack.
+
+Start a local server on port `8001`:
+
+```bash
+cp .env.local-vllm.example .env.local-vllm
+set -a
+source .env.local-vllm
+set +a
+scripts/start_local_vllm.sh
+```
+
+In another shell, load the same client variables and verify that strict
+JSON-schema output works:
+
+```bash
+set -a
+source .env.local-vllm
+set +a
+uv run python scripts/probe_local_vllm.py
+```
+
+Then run LLM-backed experiments normally, for example:
+
+```bash
+uv run python main.py run-agent \
+  --dataset-dir artifacts/datasets/mis/motif_bridge_mixture_v1/smoke_mis \
+  --generator llm \
+  --mode beam \
+  --iterations 1 \
+  --beam-width 1
+```
+
+Useful server overrides:
+
+```bash
+VLLM_MODEL=Qwen/Qwen2.5-Coder-32B-Instruct \
+VLLM_SERVED_MODEL_NAME=local-coder-32b \
+CUSTOM_CHAT_MODEL=local-coder-32b \
+VLLM_TENSOR_PARALLEL_SIZE=2 \
+VLLM_MAX_MODEL_LEN=32768 \
+scripts/start_local_vllm.sh
+```
+
+For vLLM, leave `CUSTOM_CHAT_REASONING_EFFORT` unset unless the specific server
+version and model accept that OpenAI-specific field.
+
 ## Quick Start
 
 Generate a MAXSAT dataset with default artifact placement:

@@ -8,9 +8,11 @@ wheels/
 
 # Virtual environments
 .venv
+.venv-vllm/
 
 # Environment Variables
 .env
+.env.local-vllm
 
 # Generated experiment artifacts
 /artifacts/
@@ -37,3 +39,4 @@ Gurobi/
 *.zip
 *.tar.gz
 *.pdf
+plans/
