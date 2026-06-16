@@ -19,35 +19,47 @@ from dasbench.problems import get_problem_definition
 from dasbench.problems.base import ScoreResult
 from dasbench.utils import load_jsonl, public_instance, write_json, write_jsonl
 from ml_baselines.attention_tsp import ATTENTION_TSP_BASELINE_NAME
+from ml_baselines.attention_tsp import AttentionTSPConfig, AttentionTSPModel
 from ml_baselines.attention_tsp import fit as fit_attention_tsp
 from ml_baselines.attention_tsp import solve as solve_attention_tsp
+from ml_baselines.checkpoint import load_checkpoint
 from ml_baselines.drl_mdkp import DRL_MDKP_BASELINE_NAME
+from ml_baselines.drl_mdkp import DRLMDKPConfig, MDKPActorCriticNet
 from ml_baselines.drl_mdkp import fit as fit_drl_mdkp
 from ml_baselines.drl_mdkp import solve as solve_drl_mdkp
 from ml_baselines.gnn_rl_mds import GNN_RL_MDS_BASELINE_NAME
+from ml_baselines.gnn_rl_mds import GNNRLMDSConfig
 from ml_baselines.gnn_rl_mds import fit as fit_gnn_rl_mds
 from ml_baselines.gnn_rl_mds import solve as solve_gnn_rl_mds
 from ml_baselines.graph_score_repair import GRAPH_BASELINE_NAMES
 from ml_baselines.graph_score_repair import fit as fit_graph
 from ml_baselines.graph_score_repair import solve as solve_graph
+from ml_baselines.interface import TrainedState
 from ml_baselines.item_resource_baselines import MDKP_BASELINE_NAME, PACKINGLP_BASELINE_NAME
 from ml_baselines.item_resource_baselines import fit as fit_item_resource
 from ml_baselines.item_resource_baselines import solve as solve_item_resource
 from ml_baselines.maxsat_assignment import MAXSAT_BASELINE_NAME
 from ml_baselines.maxsat_assignment import fit as fit_maxsat
 from ml_baselines.maxsat_assignment import solve as solve_maxsat
+from ml_baselines.models import ManualMessagePassing
 from ml_baselines.pignn_coloring import PIGNN_COLORING_BASELINE_NAME
+from ml_baselines.pignn_coloring import PiGNNColoringConfig
 from ml_baselines.pignn_coloring import fit as fit_pignn_coloring
 from ml_baselines.pignn_coloring import solve as solve_pignn_coloring
 from ml_baselines.pignn_mis import PIGNN_MIS_BASELINE_NAME
+from ml_baselines.pignn_mis import PiGNNMISConfig
 from ml_baselines.pignn_mis import fit as fit_pignn_mis
 from ml_baselines.pignn_mis import solve as solve_pignn_mis
 from ml_baselines.pdl_packinglp import PDL_PACKINGLP_BASELINE_NAME
+from ml_baselines.pdl_packinglp import PDLPackingLPConfig, PDLPackingLPNet
 from ml_baselines.pdl_packinglp import fit as fit_pdl_packinglp
 from ml_baselines.pdl_packinglp import solve as solve_pdl_packinglp
 from ml_baselines.runcsp_maxsat import RUN_CSP_MAXSAT_BASELINE_NAME
+from ml_baselines.runcsp_maxsat import RunCSPMaxSatConfig, RunCSPMaxSatNet
 from ml_baselines.runcsp_maxsat import fit as fit_runcsp_maxsat
 from ml_baselines.runcsp_maxsat import solve as solve_runcsp_maxsat
+from ml_baselines.seeding import seed_everything
+from ml_baselines.torch_utils import require_torch, resolve_device
 from ml_baselines.tsp_neural_constructor import TSP_BASELINE_NAME
 from ml_baselines.tsp_neural_constructor import fit as fit_tsp
 from ml_baselines.tsp_neural_constructor import solve as solve_tsp
@@ -85,6 +97,18 @@ RESERVED_CONFIG_KEYS = {
     "hyperparameter_grid",
     "baseline_search",
 }
+
+PACE_PROBLEM_NAME = "pace"
+PACE_BACKING_PROBLEM_NAME = "mds"
+DEFAULT_PACE_DATASET_DIR = Path("artifacts/pace2025_dominating_set/pace2025_ds_heuristic_llm_01/dataset")
+
+
+def _implementation_problem(problem: str) -> str:
+    return PACE_BACKING_PROBLEM_NAME if problem == PACE_PROBLEM_NAME else problem
+
+
+def _cli_problem_choices() -> list[str]:
+    return sorted({spec.problem for spec in BASELINE_SPECS.values()} | {PACE_PROBLEM_NAME})
 
 
 BASELINE_SPECS: dict[str, BaselineSpec] = {
@@ -289,9 +313,15 @@ def _base_config(
     defaults = raw_config.get("defaults") if isinstance(raw_config.get("defaults"), dict) else {}
     problems = raw_config.get("problems") if isinstance(raw_config.get("problems"), dict) else {}
     baselines = raw_config.get("baselines") if isinstance(raw_config.get("baselines"), dict) else {}
+    backing_problem = _implementation_problem(problem)
+    backing_problem_config = (
+        problems.get(backing_problem, {})
+        if backing_problem != problem and isinstance(problems.get(backing_problem, {}), dict)
+        else {}
+    )
     problem_config = problems.get(problem, {}) if isinstance(problems.get(problem, {}), dict) else {}
     baseline_config = baselines.get(baseline_name, {}) if isinstance(baselines.get(baseline_name, {}), dict) else {}
-    return _merge_dicts(plain, defaults, problem_config, baseline_config, {"seed": seed, "device": device})
+    return _merge_dicts(plain, defaults, backing_problem_config, problem_config, baseline_config, {"seed": seed, "device": device})
 
 
 def _search_configs(
@@ -368,9 +398,12 @@ def _load_target_from_splits(
     )
 
 
-def _load_target_from_dataset_dir(dataset_dir: Path) -> LoadedTarget:
+def _load_target_from_dataset_dir(dataset_dir: Path, *, requested_problem: str | None = None) -> LoadedTarget:
     manifest = load_manifest(dataset_dir)
-    problem = str(manifest["problem"])
+    manifest_problem = str(manifest["problem"])
+    if requested_problem == PACE_PROBLEM_NAME and manifest_problem != PACE_BACKING_PROBLEM_NAME:
+        raise ValueError(f"PACE datasets must use `{PACE_BACKING_PROBLEM_NAME}` schema, got `{manifest_problem}`.")
+    problem = PACE_PROBLEM_NAME if requested_problem == PACE_PROBLEM_NAME else manifest_problem
     family = str(manifest.get("family", dataset_dir.parent.name))
     dataset_id = str(dataset_dir.name)
     return LoadedTarget(
@@ -388,6 +421,20 @@ def _load_target_from_dataset_dir(dataset_dir: Path) -> LoadedTarget:
 
 
 def _discover_dataset_dirs(problem: str, *, target: str, dataset_root: Path) -> list[Path]:
+    if problem == PACE_PROBLEM_NAME:
+        if target == "all":
+            if not DEFAULT_PACE_DATASET_DIR.exists():
+                raise FileNotFoundError(f"Default PACE dataset not found: {DEFAULT_PACE_DATASET_DIR}")
+            return [DEFAULT_PACE_DATASET_DIR]
+        raw_target = Path(target)
+        if raw_target.exists():
+            return [raw_target]
+        direct = dataset_root / problem / target
+        if (direct / "manifest.json").exists():
+            return [direct]
+        raise FileNotFoundError(
+            f"No PACE dataset target `{target}` found. Use --dataset-dir or target the default dataset with --target all."
+        )
     if target == "all":
         return sorted(path.parent for path in (dataset_root / problem).glob("*/*/manifest.json"))
     raw_target = Path(target)
@@ -645,6 +692,198 @@ def run_baseline_on_target(
     return row
 
 
+def _load_json_if_present(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _checkpoint_config(
+    *,
+    checkpoint: dict[str, Any],
+    target: LoadedTarget,
+    spec: BaselineSpec,
+    raw_config: dict[str, Any],
+    seed: int,
+    device: str,
+) -> dict[str, Any]:
+    metadata = checkpoint.get("metadata") or {}
+    config = dict(metadata.get("config") or {})
+    config.update(_base_config(raw_config, problem=target.problem, baseline_name=spec.name, seed=seed, device=device))
+    return config
+
+
+def _load_trained_state_from_checkpoint(
+    *,
+    spec: BaselineSpec,
+    checkpoint_path: Path,
+    config: dict[str, Any],
+    device: str,
+) -> TrainedState:
+    torch = require_torch()
+    checkpoint = load_checkpoint(checkpoint_path, map_location="cpu", use_torch=True)
+    state = checkpoint.get("state")
+    metadata = dict(checkpoint.get("metadata") or {})
+    if not isinstance(state, dict) or "model_state_dict" not in state:
+        raise ValueError(f"Checkpoint {checkpoint_path} does not contain a model_state_dict.")
+    resolved_device = resolve_device(device)
+
+    if spec.name == PIGNN_MIS_BASELINE_NAME:
+        resolved = PiGNNMISConfig.from_config(config)
+        model = ManualMessagePassing(int(state["input_dim"]), resolved.hidden_dim, 1, layers=resolved.layers)
+        payload = {"model": model, "input_dim": int(state["input_dim"])}
+    elif spec.name == GNN_RL_MDS_BASELINE_NAME:
+        resolved = GNNRLMDSConfig.from_config(config)
+        model = ManualMessagePassing(int(state["input_dim"]), resolved.hidden_dim, 1, layers=resolved.layers)
+        payload = {"model": model, "input_dim": int(state["input_dim"])}
+    elif spec.name == PIGNN_COLORING_BASELINE_NAME:
+        resolved = PiGNNColoringConfig.from_config(config)
+        max_colors = int(state["max_colors"])
+        model = ManualMessagePassing(int(state["input_dim"]), resolved.hidden_dim, max_colors, layers=resolved.layers)
+        payload = {"model": model, "input_dim": int(state["input_dim"]), "max_colors": max_colors}
+    elif spec.name == RUN_CSP_MAXSAT_BASELINE_NAME:
+        resolved = RunCSPMaxSatConfig.from_config(config)
+        model = RunCSPMaxSatNet(
+            int(state["variable_dim"]),
+            int(state["clause_dim"]),
+            resolved.hidden_dim,
+            resolved.message_passing_steps,
+            resolved.recurrent_layers,
+        )
+        payload = {"model": model, "variable_dim": int(state["variable_dim"]), "clause_dim": int(state["clause_dim"])}
+    elif spec.name == DRL_MDKP_BASELINE_NAME:
+        resolved = DRLMDKPConfig.from_config(config)
+        model = MDKPActorCriticNet(int(state["item_dim"]), resolved.hidden_dim)
+        payload = {"model": model, "item_dim": int(state["item_dim"])}
+    elif spec.name == PDL_PACKINGLP_BASELINE_NAME:
+        resolved = PDLPackingLPConfig.from_config(config)
+        model = PDLPackingLPNet(
+            int(state["item_dim"]),
+            int(state["resource_dim"]),
+            resolved.hidden_dim,
+            resolved.layers,
+        )
+        payload = {"model": model, "item_dim": int(state["item_dim"]), "resource_dim": int(state["resource_dim"])}
+    elif spec.name == ATTENTION_TSP_BASELINE_NAME:
+        resolved = AttentionTSPConfig.from_config(config)
+        model = AttentionTSPModel(
+            int(state.get("embedding_dim", resolved.embedding_dim)),
+            int(state.get("hidden_dim", resolved.hidden_dim)),
+            int(state.get("n_heads", resolved.n_heads)),
+            int(state.get("n_encoder_layers", resolved.n_encoder_layers)),
+        )
+        payload = {"model": model, "embedding_dim": int(state.get("embedding_dim", resolved.embedding_dim))}
+    else:
+        raise ValueError(f"Eval-only checkpoint loading is not implemented for baseline `{spec.name}`.")
+
+    model.load_state_dict(state["model_state_dict"])
+    model.to(resolved_device)
+    model.eval()
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    return TrainedState(payload=payload, metadata=metadata)
+
+
+def evaluate_checkpoint_on_target(
+    *,
+    spec: BaselineSpec,
+    target: LoadedTarget,
+    output_dir: Path,
+    eval_only_from: Path,
+    raw_config: dict[str, Any],
+    seed: int,
+    device: str,
+) -> dict[str, object]:
+    source_baseline_dir = eval_only_from / target.problem / target.family / target.dataset_id / spec.name
+    checkpoint_path = source_baseline_dir / f"{spec.name}.pt"
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Missing eval-only checkpoint: {checkpoint_path}")
+
+    baseline_dir = output_dir / target.problem / target.family / target.dataset_id / spec.name
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = load_checkpoint(checkpoint_path, map_location="cpu", use_torch=True)
+    selected_config = _checkpoint_config(
+        checkpoint=checkpoint,
+        target=target,
+        spec=spec,
+        raw_config=raw_config,
+        seed=seed,
+        device=device,
+    )
+    seed_everything(int(selected_config.get("seed", seed)))
+    trained_state = _load_trained_state_from_checkpoint(
+        spec=spec,
+        checkpoint_path=checkpoint_path,
+        config=selected_config,
+        device=device,
+    )
+    solver = _solver_for_state(spec, trained_state, selected_config)
+    test_summary = _evaluate_per_instance(
+        problem_name=target.problem,
+        baseline_name=spec.name,
+        solver=solver,
+        instances=target.test_full,
+        split="test",
+        output_jsonl=baseline_dir / "test_outputs.jsonl",
+        output_csv=baseline_dir / "test_outputs.csv",
+    )
+
+    source_summary = _load_json_if_present(source_baseline_dir / "run_summary.json")
+    source_selection = _load_json_if_present(source_baseline_dir / "validation_selection.json")
+    selected_source = source_selection.get("selected") if isinstance(source_selection.get("selected"), dict) else {}
+    validation_summary = selected_source.get("validation_summary") if isinstance(selected_source.get("validation_summary"), dict) else {}
+    if not validation_summary:
+        validation_summary = {
+            "average_normalized_quality": float(source_summary.get("selected_validation_quality", 0.0) or 0.0),
+            "feasibility_rate": float(source_summary.get("selected_validation_feasibility_rate", 0.0) or 0.0),
+        }
+    source_metrics_path = Path(
+        str(source_summary.get("train_metrics_path") or source_baseline_dir / f"{spec.name}_train_metrics.jsonl")
+    )
+    selected = {
+        "trial_index": int(source_summary.get("selected_trial_index", selected_source.get("trial_index", 0)) or 0),
+        "config": selected_config,
+        "training_time_ms": 0.0,
+        "checkpoint_path": str(checkpoint_path),
+        "metrics_path": str(source_metrics_path),
+        "validation_summary": validation_summary,
+    }
+
+    write_json(baseline_dir / "selected_config.json", selected_config)
+    write_json(
+        baseline_dir / "eval_only_source.json",
+        {
+            "eval_only_from": str(eval_only_from),
+            "source_run_dir": str(source_baseline_dir),
+            "source_checkpoint_path": str(checkpoint_path),
+            "source_training_time_ms": float(source_summary.get("total_training_time_ms", 0.0) or 0.0),
+        },
+    )
+    write_json(baseline_dir / "test_summary.json", test_summary)
+    row = _aggregate_row(
+        target=target,
+        spec=spec,
+        selected=selected,
+        test_summary=test_summary,
+        baseline_dir=baseline_dir,
+        selected_checkpoint_path=checkpoint_path,
+        selected_metrics_path=source_metrics_path,
+        total_training_ms=0.0,
+        trial_count=0,
+        seed=seed,
+        device=device,
+        selected_config=selected_config,
+    )
+    row["eval_only_from"] = str(eval_only_from)
+    row["source_run_dir"] = str(source_baseline_dir)
+    write_json(baseline_dir / "run_summary.json", row)
+    return row
+
+
 def _aggregate_row(
     *,
     target: LoadedTarget,
@@ -757,13 +996,14 @@ def _csv_value(value: object) -> object:
 
 
 def _baseline_specs_for_problem(problem: str, requested: list[str] | None) -> list[BaselineSpec]:
-    specs = [spec for spec in BASELINE_SPECS.values() if spec.problem == problem]
+    implementation_problem = _implementation_problem(problem)
+    specs = [spec for spec in BASELINE_SPECS.values() if spec.problem == implementation_problem]
     if requested:
         requested_set = set(requested)
         unknown = sorted(requested_set - set(BASELINE_SPECS))
         if unknown:
             raise ValueError(f"Unknown ML baseline(s): {', '.join(unknown)}")
-        specs = [BASELINE_SPECS[name] for name in requested if BASELINE_SPECS[name].problem == problem]
+        specs = [BASELINE_SPECS[name] for name in requested if BASELINE_SPECS[name].problem == implementation_problem]
     if not specs:
         raise ValueError(f"No implemented ML baselines selected for problem `{problem}`.")
     return specs
@@ -791,12 +1031,58 @@ def run_from_args(args: argparse.Namespace) -> dict[str, object]:
             target=args.target,
             dataset_root=args.dataset_root,
         )
-        targets = [_load_target_from_dataset_dir(path) for path in dataset_dirs]
-    rows: list[dict[str, object]] = []
+        targets = [_load_target_from_dataset_dir(path, requested_problem=args.problem) for path in dataset_dirs]
     for target in targets:
         if target.problem != args.problem:
             raise ValueError(f"Target {target.target} is for problem `{target.problem}`, not `{args.problem}`.")
-        for spec in _baseline_specs_for_problem(args.problem, args.baseline):
+    specs = _baseline_specs_for_problem(args.problem, args.baseline)
+    rows: list[dict[str, object]] = []
+
+    if args.eval_only_from is not None:
+        requested_baselines = bool(args.baseline)
+        for target in targets:
+            for spec in specs:
+                try:
+                    rows.append(
+                        evaluate_checkpoint_on_target(
+                            spec=spec,
+                            target=target,
+                            output_dir=output_root,
+                            eval_only_from=args.eval_only_from,
+                            raw_config=raw_config,
+                            seed=args.seed,
+                            device=args.device,
+                        )
+                    )
+                except FileNotFoundError:
+                    if requested_baselines:
+                        raise
+                    continue
+                _write_csv(output_root / "aggregate_results.csv", rows, AGGREGATE_CSV_FIELDS)
+                write_json(output_root / "aggregate_results.json", rows)
+        if not rows:
+            raise FileNotFoundError(
+                f"No matching eval-only checkpoints found for problem `{args.problem}` under {args.eval_only_from}."
+            )
+        summary = {
+            "run_id": run_id,
+            "problem": args.problem,
+            "target": args.target,
+            "seed": args.seed,
+            "device": args.device,
+            "select_on_validation": False,
+            "eval_only_from": str(args.eval_only_from),
+            "target_count": len(targets),
+            "result_count": len(rows),
+            "aggregate_csv_path": str(output_root / "aggregate_results.csv"),
+            "aggregate_json_path": str(output_root / "aggregate_results.json"),
+            "output_dir": str(output_root),
+        }
+        write_json(output_root / "run_summary.json", summary)
+        return summary
+
+    for target in targets:
+        for spec in specs:
             rows.append(
                 run_baseline_on_target(
                     spec=spec,
@@ -829,7 +1115,7 @@ def run_from_args(args: argparse.Namespace) -> dict[str, object]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train and evaluate implemented DasBench ML baselines.")
-    parser.add_argument("--problem", required=True, choices=sorted({spec.problem for spec in BASELINE_SPECS.values()}))
+    parser.add_argument("--problem", required=True, choices=_cli_problem_choices())
     parser.add_argument("--target", default="all", help="Dataset target under --dataset-root/<problem>, or `all`.")
     parser.add_argument("--dataset-root", type=Path, default=Path("artifacts/datasets"))
     parser.add_argument("--dataset-dir", type=Path, action="append", help="Dataset directory containing manifest/train/validation/test.")
@@ -842,6 +1128,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--config", type=Path, help="JSON or YAML config override.")
     parser.add_argument("--baseline", action="append", help="Baseline name to run. May be repeated.")
+    parser.add_argument(
+        "--eval-only-from",
+        type=Path,
+        help="Existing ML baseline run root to load checkpoints from; skips training and evaluates test split only.",
+    )
     parser.add_argument(
         "--select-on-validation",
         action="store_true",

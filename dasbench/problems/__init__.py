@@ -15,6 +15,7 @@ PROBLEMS: dict[str, ProblemDefinition] = {
     "maxsat": MAXSAT_PROBLEM,
     "mis": MIS_PROBLEM,
     "mds": MDS_PROBLEM,
+    "pace": MDS_PROBLEM,
     "packing_lp": PACKING_LP_PROBLEM,
     "tsp": TSP_PROBLEM,
 }

@@ -40,6 +40,46 @@ python -m baselines.src.ml_baselines.run_ml_baselines \
   --seed 0
 ```
 
+Run the PACE 2025 Dominating Set dataset as a separate `pace` problem. This uses the MDS-shaped
+PACE JSONL splits and the MDS-compatible ML baselines, but writes results under `pace/...`:
+
+```bash
+python -m baselines.src.ml_baselines.run_ml_baselines \
+  --problem pace \
+  --target all \
+  --baseline ml_gnn_rl_mds \
+  --seed 0 \
+  --device cpu
+```
+
+Evaluate previously trained checkpoints without retraining, for example to compare GPU-trained solvers on CPU inference:
+
+```bash
+python -m baselines.src.ml_baselines.run_ml_baselines \
+  --problem tsp \
+  --target all \
+  --baseline ml_attention_tsp \
+  --eval-only-from artifacts/ml_baseline_runs/ml_faithful_all_20260603_104930 \
+  --output-dir artifacts/ml_baseline_cpu_eval \
+  --run-id ml_attention_tsp_cpu_eval \
+  --seed 0 \
+  --device cpu
+```
+
+PACE eval-only uses the same form:
+
+```bash
+python -m baselines.src.ml_baselines.run_ml_baselines \
+  --problem pace \
+  --target all \
+  --baseline ml_gnn_rl_mds \
+  --eval-only-from artifacts/ml_baseline_runs/pace_ml_run \
+  --output-dir artifacts/ml_baseline_pace_eval \
+  --run-id pace_cpu_eval \
+  --seed 0 \
+  --device cpu
+```
+
 Run with explicit split paths:
 
 ```bash

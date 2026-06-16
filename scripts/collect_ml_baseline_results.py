@@ -228,6 +228,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_OUTPUT_DIR,
         help=f"Directory under results/ for combined metrics and markdown reports. Defaults to {DEFAULT_OUTPUT_DIR}.",
     )
+    parser.add_argument(
+        "--exclude-target-substring",
+        action="append",
+        default=[],
+        help="Drop rows whose target contains this substring. May be repeated.",
+    )
     parser.add_argument("--title", default="Second-Scale v2 ML Baseline Results")
     return parser
 
@@ -265,6 +271,10 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def _read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -279,8 +289,47 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def load_rows(input_roots: list[Path]) -> list[dict[str, Any]]:
+def _row_key(row: dict[str, Any]) -> tuple[str, ...]:
+    return (
+        str(row.get("problem", "")),
+        str(row.get("family", "")),
+        str(row.get("dataset_id", "")),
+        str(row.get("target", "")),
+        str(row.get("baseline", "")),
+        str(row.get("run_dir", "")),
+    )
+
+
+def _enrich_row(row: dict[str, Any], *, source_run_id: str, source_path: Path) -> dict[str, Any]:
+    enriched: dict[str, Any] = {field: row.get(field, "") for field in AGGREGATE_FIELDS}
+    enriched["source_run_id"] = source_run_id
+    enriched["source_aggregate_csv"] = str(source_path)
+    return enriched
+
+
+def _completed_run_summary_rows(root: Path) -> list[dict[str, Any]]:
+    if root.is_file():
+        return []
     rows: list[dict[str, Any]] = []
+    for summary_path in sorted(root.rglob("run_summary.json")):
+        run_dir = summary_path.parent
+        test_outputs = run_dir / "test_outputs.jsonl"
+        test_summary = run_dir / "test_summary.json"
+        if not test_outputs.exists() or not test_summary.exists():
+            continue
+        try:
+            summary = _read_json(summary_path)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(summary, dict):
+            continue
+        source_run_id = root.name
+        rows.append(_enrich_row(summary, source_run_id=source_run_id, source_path=summary_path))
+    return rows
+
+
+def load_rows(input_roots: list[Path]) -> list[dict[str, Any]]:
+    rows_by_key: dict[tuple[str, ...], dict[str, Any]] = {}
     seen_paths: set[Path] = set()
     for root in input_roots:
         if root.is_file() and root.name == "aggregate_results.csv":
@@ -294,10 +343,11 @@ def load_rows(input_roots: list[Path]) -> list[dict[str, Any]]:
             seen_paths.add(resolved)
             source_run_id = csv_path.parent.name
             for row in _read_csv(csv_path):
-                enriched: dict[str, Any] = {field: row.get(field, "") for field in AGGREGATE_FIELDS}
-                enriched["source_run_id"] = source_run_id
-                enriched["source_aggregate_csv"] = str(csv_path)
-                rows.append(enriched)
+                enriched = _enrich_row(row, source_run_id=source_run_id, source_path=csv_path)
+                rows_by_key[_row_key(enriched)] = enriched
+        for enriched in _completed_run_summary_rows(root):
+            rows_by_key[_row_key(enriched)] = enriched
+    rows = list(rows_by_key.values())
     rows.sort(key=lambda row: (str(row["problem"]), str(row["family"]), str(row["baseline"]), str(row["source_run_id"])))
     return rows
 
@@ -473,8 +523,16 @@ def build_sources_markdown(rows: list[dict[str, Any]], *, title: str) -> str:
     return "\n".join(lines)
 
 
-def collect(input_roots: list[Path], output_dir: Path, *, title: str) -> dict[str, Any]:
+def collect(
+    input_roots: list[Path],
+    output_dir: Path,
+    *,
+    title: str,
+    exclude_target_substrings: list[str] | None = None,
+) -> dict[str, Any]:
     rows = load_rows(input_roots)
+    for needle in exclude_target_substrings or []:
+        rows = [row for row in rows if needle not in str(row.get("target", ""))]
     if not rows:
         raise FileNotFoundError(f"No aggregate_results.csv rows found under: {', '.join(str(path) for path in input_roots)}")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -508,7 +566,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     input_roots = args.input_root or [DEFAULT_INPUT_ROOT]
-    result = collect(input_roots, args.output_dir, title=args.title)
+    result = collect(
+        input_roots,
+        args.output_dir,
+        title=args.title,
+        exclude_target_substrings=args.exclude_target_substring,
+    )
     print(f"Collected {result['row_count']} rows")
     print(f"CSV: {result['combined_csv']}")
     print(f"Report: {result['report_markdown']}")
