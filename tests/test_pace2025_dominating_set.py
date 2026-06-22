@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 from benchmarks.pace2025_dominating_set import (
     SourceConfig,
     build_pace_dataset,
     domination_lower_bound,
+    export_pace_evaluation,
     parse_pace_gr_text,
 )
 from dasbench.data import load_split
-from dasbench.utils import load_json, public_instance
+from dasbench.utils import load_json, public_instance, write_json, write_jsonl
 
 
 def test_parse_pace_gr_text_converts_one_based_edges() -> None:
@@ -66,3 +68,62 @@ def test_build_pace_dataset_uses_private_proxy_fields(tmp_path: Path) -> None:
     assert "_pace_reference_solution" in train[0]
     assert "_pace_reference_solution" not in public_train
     assert "optimum_objective" not in public_train
+
+
+def test_export_pace_evaluation_records_missing_selected_solver(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "dataset"
+    instance = {
+        "id": "pace-tiny-001",
+        "num_vertices": 3,
+        "edges": [[0, 1], [1, 2]],
+        "optimum_objective": 1,
+        "pace_source_path": "private/ds/heuristic/private_heuristic_001.gr.tar.xz",
+        "_pace_reference_objective": 1,
+    }
+    write_json(
+        dataset_dir / "manifest.json",
+        {
+            "problem": "mds",
+            "family": "pace2025_ds_heuristic_private",
+            "metric_definition": {
+                "primary": "normalized_quality",
+                "secondary": "optimality_rate",
+                "tertiary": "average_runtime_ms",
+            },
+            "instance_schema_version": "mds.v1",
+            "instance_params": {},
+            "split_sizes": {"train": 1, "validation": 0, "test": 1},
+        },
+    )
+    write_jsonl(dataset_dir / "train.jsonl", [instance])
+    write_jsonl(dataset_dir / "test.jsonl", [instance])
+
+    agent_run_dir = tmp_path / "agent_run"
+    candidate_dir = agent_run_dir / "candidates" / "llm_iter00_slot00"
+    candidate_dir.mkdir(parents=True)
+    write_json(
+        agent_run_dir / "synthesis_summary.json",
+        {
+            "best_candidate": {
+                "slug": "llm_iter00_slot00",
+                "candidate_dir": str(candidate_dir),
+                "train": {"error": "GenerationDebugError: malformed JSON"},
+            }
+        },
+    )
+
+    output_dir = tmp_path / "pace_evaluation"
+    summary = export_pace_evaluation(
+        dataset_dir=dataset_dir,
+        agent_run_dir=agent_run_dir,
+        output_dir=output_dir,
+    )
+
+    assert summary["feasible_count"] == 0
+    assert summary["invalid_count"] == 1
+    assert "solution.py" in str(summary["error"])
+    assert "malformed JSON" in str(summary["error"])
+    rows = list(csv.DictReader((output_dir / "pace_private_results.csv").open(encoding="utf-8")))
+    assert len(rows) == 1
+    assert rows[0]["feasible"] == "False"
+    assert "solution.py" in rows[0]["error"]

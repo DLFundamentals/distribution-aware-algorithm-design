@@ -12,7 +12,7 @@ from benchmarks.candidate_count_sweep import main as candidate_main
 from benchmarks.common import SweepJob, aggregate_rows, benchmark_command, run_job
 from benchmarks.llm_pv_benchmark import build_jobs as build_llm_pv_jobs
 from benchmarks.llm_pv_benchmark import _build_prompt_messages as build_llm_pv_prompt_messages
-from benchmarks.llm_pv_benchmark import extract_solution_code
+from benchmarks.llm_pv_benchmark import _messages_for_plain_python_solution, extract_solution_code
 from benchmarks.llm_pv_benchmark import main as llm_pv_main
 from benchmarks.problem_size_sweep import build_jobs as build_size_jobs
 from benchmarks.problem_size_sweep import main as size_main
@@ -147,6 +147,31 @@ class BenchmarkSweepTests(unittest.TestCase):
         self.assertEqual(prompt["solution_contract"]["return_type"], "list[int]")
         self.assertIn("city ids", prompt["solution_contract"]["required_shape"])
         self.assertIn("dict", " ".join(prompt["solution_contract"]["do_not_return"]))
+
+    def test_llm_pv_plain_python_prompt_drops_json_wrapper_requirement(self) -> None:
+        from benchmarks.llm_pv_benchmark import build_parser
+
+        args = build_parser().parse_args(["--dry-run", "--problem", "tsp"])
+        config = build_llm_pv_jobs(args, sweep_id="plain-python-prompt")[0].config
+        messages = build_llm_pv_prompt_messages(
+            manifest={
+                "problem": "tsp",
+                "family": "clustered_euclidean_v1",
+                "metric_definition": {"primary": "normalized_quality"},
+                "instance_schema_version": "tsp.v1",
+                "instance_params": {"num_cities": 64},
+            },
+            train_summary={"family": "clustered_euclidean_v1", "num_cities": 64},
+            train_public=[],
+            attempt_index=1,
+            config=config,
+        )
+
+        prompt = json.loads(_messages_for_plain_python_solution(messages)[1]["content"])
+
+        self.assertIn("raw contents of solution.py", prompt["constraints"][0])
+        self.assertNotIn("solution_py", prompt["constraints"][0])
+        self.assertEqual(prompt["response_format"], "raw Python module text defining solve(...) or build_solver(...)")
 
     def test_completed_report_is_skipped_without_force(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="dasbench-sweep-resume-"))

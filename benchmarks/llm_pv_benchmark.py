@@ -387,6 +387,7 @@ def _build_prompt_messages(
     train_public: list[dict[str, object]],
     attempt_index: int,
     config: LLMPVConfig,
+    plain_python_response: bool = False,
 ) -> list[dict[str, str]]:
     problem = get_problem_definition(str(manifest["problem"]))
     examples, examples_truncated, example_chars = _prepare_train_examples(
@@ -424,8 +425,17 @@ def _build_prompt_messages(
             "alternative": "or define build_solver(analysis=None, manifest=None) -> callable",
         },
         "constraints": [
-            "Return only one JSON object with key solution_py containing the full contents of solution.py.",
-            "Do not include markdown outside the JSON object.",
+            (
+                "Return only the raw contents of solution.py as Python code. "
+                "Do not wrap it in JSON, markdown fences, notes, or explanations."
+                if plain_python_response
+                else "Return only one JSON object with key solution_py containing the full contents of solution.py."
+            ),
+            (
+                "Do not include text outside the Python module."
+                if plain_python_response
+                else "Do not include markdown outside the JSON object."
+            ),
             "Use train examples only as empirical distribution examples or tuning data.",
             "Do not assume access to optimum_objective, optimum_solution, private fields, files, network, or API calls at solve time.",
             "The solver will receive one public instance at a time and must return a solution in the problem's expected format.",
@@ -434,9 +444,13 @@ def _build_prompt_messages(
             "Do not import dasbench.integrations, gurobipy, pyscipopt, ortools, highspy, or external exact solvers.",
             "If using randomness, seed it deterministically from the public instance id.",
         ],
-        "response_format": {
-            "solution_py": "full Python module as a string; it must define solve(...) or build_solver(...)",
-        },
+        "response_format": (
+            "raw Python module text defining solve(...) or build_solver(...)"
+            if plain_python_response
+            else {
+                "solution_py": "full Python module as a string; it must define solve(...) or build_solver(...)",
+            }
+        ),
     }
     return [
         {
@@ -467,7 +481,8 @@ def _call_llm_for_solution(
 ) -> tuple[str, dict[str, object]]:
     api_config = _api_config_for_run(config)
     if isinstance(api_config, CustomChatAPIConfig):
-        return _call_custom_chat_for_solution(messages=messages, config=config, api_config=api_config)
+        plain_messages = _messages_for_plain_python_solution(messages)
+        return _call_custom_chat_for_solution(messages=plain_messages, config=config, api_config=api_config)
     client = build_chat_client(api_config)
     request_body: dict[str, object] = {
         "model": api_config.model,
@@ -536,7 +551,6 @@ def _call_custom_chat_for_solution(
         raw_response = create_chat_completion_raw(
             api_config,
             messages=messages,
-            response_format=_load_solution_schema(),
             timeout=config.api_timeout_seconds,
         )
     except OpenAIError as exc:
@@ -555,6 +569,35 @@ def _call_custom_chat_for_solution(
     metadata["response_model"] = getattr(completion, "model", None)
     metadata["usage"] = _normalize_usage(getattr(completion, "usage", None))
     return chat_completion_text(completion), metadata
+
+
+def _messages_for_plain_python_solution(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    converted: list[dict[str, str]] = []
+    for message in messages:
+        if message.get("role") != "user":
+            converted.append(dict(message))
+            continue
+        try:
+            payload = json.loads(message["content"])
+        except Exception:
+            converted.append(dict(message))
+            continue
+        payload["constraints"] = [
+            (
+                "Return only the raw contents of solution.py as Python code. "
+                "Do not wrap it in JSON, markdown fences, notes, or explanations."
+            ),
+            "Use train examples only as empirical distribution examples or tuning data.",
+            "Do not assume access to optimum_objective, optimum_solution, private fields, files, network, or API calls at solve time.",
+            "The solver will receive one public instance at a time and must return a solution in the problem's expected format.",
+            "Return the raw solution object from solve(...), not a dict wrapper, score, explanation, tuple, or metadata payload.",
+            "Keep per-instance runtime low and deterministic.",
+            "Do not import dasbench.integrations, gurobipy, pyscipopt, ortools, highspy, or external exact solvers.",
+            "If using randomness, seed it deterministically from the public instance id.",
+        ]
+        payload["response_format"] = "raw Python module text defining solve(...) or build_solver(...)"
+        converted.append({**message, "content": json.dumps(payload, indent=2, sort_keys=True)})
+    return converted
 
 
 def _write_attempt_failure(
@@ -606,6 +649,7 @@ def _evaluate_attempt(
         train_public=train_public,
         attempt_index=attempt_index,
         config=config,
+        plain_python_response=_llm_pv_uses_custom_provider(),
     )
     write_summary(attempt_dir / "prompt.json", {"messages": messages})
     if dry_run:
@@ -982,10 +1026,13 @@ def _command_for_job(job: LLMPVJob) -> list[str] | None:
 
 
 def _build_config(args: argparse.Namespace) -> LLMPVConfig:
+    reasoning_effort = None if args.reasoning_effort is None else str(args.reasoning_effort).strip()
+    if reasoning_effort == "none":
+        reasoning_effort = None
     return LLMPVConfig(
         attempts=max(1, int(args.attempts)),
         model=str(args.model),
-        reasoning_effort=None if args.reasoning_effort is None else str(args.reasoning_effort),
+        reasoning_effort=reasoning_effort or None,
         max_output_tokens=None if args.max_output_tokens is None else max(1, int(args.max_output_tokens)),
         api_timeout_seconds=max(1.0, float(args.api_timeout_seconds)),
         enable_code_interpreter=bool(args.enable_code_interpreter),
@@ -999,16 +1046,23 @@ def _build_config(args: argparse.Namespace) -> LLMPVConfig:
 
 def _llm_pv_default_model() -> str:
     load_openai_dotenv()
-    if os.getenv(PROVIDER_ENV_VAR, "").strip().lower() == CUSTOM_PROVIDER:
+    if _llm_pv_uses_custom_provider():
         return os.getenv(CUSTOM_MODEL_ENV_VAR, DEFAULT_MODEL)
     return os.getenv(OPENAI_MODEL_ENV_VAR, DEFAULT_MODEL)
 
 
 def _llm_pv_default_reasoning_effort() -> str | None:
     load_openai_dotenv()
-    if os.getenv(PROVIDER_ENV_VAR, "").strip().lower() == CUSTOM_PROVIDER:
-        return os.getenv(CUSTOM_REASONING_EFFORT_ENV_VAR)
-    return os.getenv(OPENAI_REASONING_EFFORT_ENV_VAR, DEFAULT_REASONING_EFFORT)
+    if _llm_pv_uses_custom_provider():
+        value = os.getenv(CUSTOM_REASONING_EFFORT_ENV_VAR)
+        return value.strip() if value and value.strip() else None
+    value = os.getenv(OPENAI_REASONING_EFFORT_ENV_VAR, DEFAULT_REASONING_EFFORT)
+    return value.strip() if value and value.strip() else None
+
+
+def _llm_pv_uses_custom_provider() -> bool:
+    load_openai_dotenv()
+    return os.getenv(PROVIDER_ENV_VAR, "").strip().lower() == CUSTOM_PROVIDER
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1039,7 +1093,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--reasoning-effort",
-        choices=["minimal", "low", "medium", "high", "xhigh"],
+        choices=["none", "minimal", "low", "medium", "high", "xhigh", "max"],
         default=_llm_pv_default_reasoning_effort(),
         help=(
             f"LLM reasoning effort. Defaults to ${CUSTOM_REASONING_EFFORT_ENV_VAR} for custom_chat "

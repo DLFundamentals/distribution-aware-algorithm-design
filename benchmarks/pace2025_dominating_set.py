@@ -18,7 +18,7 @@ from dasbench.data import load_manifest, load_split
 from dasbench.integrations import load_openai_dotenv
 from dasbench.problems import get_problem_definition
 from dasbench.problems.graph_utils import adjacency_sets, normalized_edges
-from dasbench.utils import public_instance, timestamp_token, write_json, write_jsonl
+from dasbench.utils import load_jsonl, public_instance, timestamp_token, write_json, write_jsonl
 
 
 PACE_REPO_URL = "https://github.com/MarioGrobler/PACE2025-instances"
@@ -26,6 +26,25 @@ PACE_RAW_BASE_URL = "https://raw.githubusercontent.com/MarioGrobler/PACE2025-ins
 DEFAULT_OUTPUT_ROOT = Path("artifacts/pace2025_dominating_set")
 DEFAULT_CACHE_DIR = Path("artifacts/external/pace2025-instances")
 BEST_GREEDY_BASELINES = ("high_degree_greedy", "marginal_gain_greedy", "redundancy_aware")
+PACE_EVALUATION_FIELDNAMES = [
+    "instance_id",
+    "pace_source_path",
+    "num_vertices",
+    "num_edges",
+    "feasible",
+    "solution_size",
+    "lower_bound",
+    "reference_objective",
+    "runtime_ms",
+    "solution_file",
+    "error",
+]
+PACE_OFFICIAL_COMPARISON_NOTE = (
+    "PACE exact-track score requires proving optimality, and PACE heuristic score requires "
+    "per-instance best-known/optimal solution values. The public instance repository does not "
+    "bundle those labels, so this artifact reports feasibility, solution sizes, runtimes, and "
+    "lower-bound/reference proxy columns."
+)
 
 
 @dataclass(frozen=True)
@@ -413,6 +432,69 @@ def write_pace_solution(path: Path, solution: list[int]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _write_pace_evaluation_artifacts(
+    *,
+    dataset_dir: Path,
+    agent_run_dir: Path,
+    output_dir: Path,
+    best_candidate_slug: str,
+    rows: list[dict[str, object]],
+    solution_dir: Path,
+    error: str | None = None,
+) -> dict[str, object]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = output_dir / "pace_private_results.csv"
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=PACE_EVALUATION_FIELDNAMES)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    feasible_rows = [row for row in rows if row.get("feasible")]
+    feasible_count = len(feasible_rows)
+    total_solution_size = sum(int(row.get("solution_size") or 0) for row in feasible_rows)
+    total_runtime_ms = sum(float(row.get("runtime_ms") or 0.0) for row in rows)
+    summary = {
+        "schema_version": "pace2025_ds_evaluation.v1",
+        "dataset_dir": str(dataset_dir),
+        "agent_run_dir": str(agent_run_dir),
+        "best_candidate_slug": best_candidate_slug,
+        "num_instances": len(rows),
+        "feasible_count": feasible_count,
+        "invalid_count": len(rows) - feasible_count,
+        "total_solution_size": total_solution_size,
+        "average_solution_size": total_solution_size / feasible_count if feasible_count else 0.0,
+        "average_runtime_ms": total_runtime_ms / len(rows) if rows else 0.0,
+        "results_csv": str(csv_path),
+        "solutions_dir": str(solution_dir),
+        "official_comparison_note": PACE_OFFICIAL_COMPARISON_NOTE,
+    }
+    if error:
+        summary["error"] = error
+    write_json(output_dir / "pace_evaluation_summary.json", summary)
+    return summary
+
+
+def _failed_pace_evaluation_rows(test_full: list[dict[str, object]], *, error: str) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for instance in test_full:
+        rows.append(
+            {
+                "instance_id": instance["id"],
+                "pace_source_path": instance.get("pace_source_path"),
+                "num_vertices": instance["num_vertices"],
+                "num_edges": len(instance["edges"]),
+                "feasible": False,
+                "solution_size": 0,
+                "lower_bound": instance.get("optimum_objective"),
+                "reference_objective": instance.get("_pace_reference_objective"),
+                "runtime_ms": 0.0,
+                "solution_file": "",
+                "error": error,
+            }
+        )
+    return rows
+
+
 def export_pace_evaluation(
     *,
     dataset_dir: Path,
@@ -420,25 +502,62 @@ def export_pace_evaluation(
     output_dir: Path,
 ) -> dict[str, object]:
     manifest = load_manifest(dataset_dir)
-    problem = get_problem_definition("mds")
-    train_public = load_split(dataset_dir, "train", public=True)
-    test_full = load_split(dataset_dir, "test")
     synthesis_summary = json.loads((agent_run_dir / "synthesis_summary.json").read_text(encoding="utf-8"))
     best_candidate = synthesis_summary["best_candidate"]
     candidate_dir = Path(best_candidate["candidate_dir"])
-
-    analysis = run_analysis(
-        candidate_dir,
-        train_public,
-        manifest=manifest,
-        artifact_dir=output_dir / "analysis",
-    )
-    solver = build_solver(candidate_dir, analysis=analysis, manifest=manifest)
     solution_dir = output_dir / "solutions"
+    solution_path = candidate_dir / "solution.py"
+    if not solution_path.exists():
+        candidate_error = None
+        for split_name in ("test", "validation", "train"):
+            split_summary = best_candidate.get(split_name)
+            if isinstance(split_summary, dict) and split_summary.get("error"):
+                candidate_error = str(split_summary["error"])
+                break
+        error = (
+            f"Selected candidate `{best_candidate['slug']}` is not exportable because "
+            f"`{solution_path}` does not exist."
+        )
+        if candidate_error:
+            error = f"{error} Candidate error: {candidate_error}"
+        test_full = load_jsonl(dataset_dir / "test.jsonl")
+        rows = _failed_pace_evaluation_rows(test_full, error=error)
+        return _write_pace_evaluation_artifacts(
+            dataset_dir=dataset_dir,
+            agent_run_dir=agent_run_dir,
+            output_dir=output_dir,
+            best_candidate_slug=str(best_candidate["slug"]),
+            rows=rows,
+            solution_dir=solution_dir,
+            error=error,
+        )
+
+    train_public = load_split(dataset_dir, "train", public=True)
+    try:
+        analysis = run_analysis(
+            candidate_dir,
+            train_public,
+            manifest=manifest,
+            artifact_dir=output_dir / "analysis",
+        )
+        solver = build_solver(candidate_dir, analysis=analysis, manifest=manifest)
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        test_full = load_jsonl(dataset_dir / "test.jsonl")
+        rows = _failed_pace_evaluation_rows(test_full, error=error)
+        return _write_pace_evaluation_artifacts(
+            dataset_dir=dataset_dir,
+            agent_run_dir=agent_run_dir,
+            output_dir=output_dir,
+            best_candidate_slug=str(best_candidate["slug"]),
+            rows=rows,
+            solution_dir=solution_dir,
+            error=error,
+        )
+
+    problem = get_problem_definition("mds")
+    test_full = load_split(dataset_dir, "test")
     rows: list[dict[str, object]] = []
-    feasible_count = 0
-    total_solution_size = 0
-    total_runtime_ms = 0.0
     for instance in test_full:
         exposed = public_instance(instance)
         start = time.perf_counter()
@@ -456,10 +575,6 @@ def export_pace_evaluation(
             feasible = False
             error = f"{type(exc).__name__}: {exc}"
         solution_size = len(solution) if feasible else 0
-        if feasible:
-            feasible_count += 1
-            total_solution_size += solution_size
-        total_runtime_ms += runtime_ms
         solution_file = solution_dir / f"{instance['id']}.sol"
         if feasible:
             write_pace_solution(solution_file, solution)
@@ -478,35 +593,14 @@ def export_pace_evaluation(
                 "error": error or "",
             }
         )
-    output_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = output_dir / "pace_private_results.csv"
-    with csv_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()) if rows else [])
-        if rows:
-            writer.writeheader()
-            writer.writerows(rows)
-    summary = {
-        "schema_version": "pace2025_ds_evaluation.v1",
-        "dataset_dir": str(dataset_dir),
-        "agent_run_dir": str(agent_run_dir),
-        "best_candidate_slug": best_candidate["slug"],
-        "num_instances": len(test_full),
-        "feasible_count": feasible_count,
-        "invalid_count": len(test_full) - feasible_count,
-        "total_solution_size": total_solution_size,
-        "average_solution_size": total_solution_size / feasible_count if feasible_count else 0.0,
-        "average_runtime_ms": total_runtime_ms / len(test_full) if test_full else 0.0,
-        "results_csv": str(csv_path),
-        "solutions_dir": str(solution_dir),
-        "official_comparison_note": (
-            "PACE exact-track score requires proving optimality, and PACE heuristic score requires "
-            "per-instance best-known/optimal solution values. The public instance repository does not "
-            "bundle those labels, so this artifact reports feasibility, solution sizes, runtimes, and "
-            "lower-bound/reference proxy columns."
-        ),
-    }
-    write_json(output_dir / "pace_evaluation_summary.json", summary)
-    return summary
+    return _write_pace_evaluation_artifacts(
+        dataset_dir=dataset_dir,
+        agent_run_dir=agent_run_dir,
+        output_dir=output_dir,
+        best_candidate_slug=str(best_candidate["slug"]),
+        rows=rows,
+        solution_dir=solution_dir,
+    )
 
 
 def _reference_baselines_from_arg(value: str) -> list[str]:
