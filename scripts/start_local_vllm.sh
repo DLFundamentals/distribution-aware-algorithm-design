@@ -9,8 +9,8 @@ UV_TORCH_BACKEND="${UV_TORCH_BACKEND:-auto}"
 
 VLLM_MODEL="${VLLM_MODEL:-Qwen/Qwen2.5-Coder-7B-Instruct}"
 VLLM_SERVED_MODEL_NAME="${VLLM_SERVED_MODEL_NAME:-${VLLM_MODEL##*/}}"
-VLLM_HOST="${VLLM_HOST:-0.0.0.0}"
-VLLM_PORT="${VLLM_PORT:-8001}"
+DASBENCH_VLLM_HOST="${DASBENCH_VLLM_HOST:-0.0.0.0}"
+DASBENCH_VLLM_PORT="${DASBENCH_VLLM_PORT:-8001}"
 VLLM_API_KEY="${VLLM_API_KEY:-local-vllm}"
 VLLM_TENSOR_PARALLEL_SIZE="${VLLM_TENSOR_PARALLEL_SIZE:-1}"
 VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
@@ -21,14 +21,20 @@ VLLM_GENERATION_CONFIG="${VLLM_GENERATION_CONFIG:-vllm}"
 if [[ ! -x "$VLLM_ENV/bin/vllm" ]]; then
   echo "Creating vLLM environment at $VLLM_ENV with Python $VLLM_PYTHON"
   uv venv --python "$VLLM_PYTHON" --seed "$VLLM_ENV"
-  uv pip install --python "$VLLM_ENV/bin/python" --torch-backend "$UV_TORCH_BACKEND" vllm
+  uv pip install --python "$VLLM_ENV/bin/python" --torch-backend "$UV_TORCH_BACKEND" vllm ninja
 fi
+
+if [[ ! -x "$VLLM_ENV/bin/ninja" ]]; then
+  uv pip install --python "$VLLM_ENV/bin/python" ninja
+fi
+
+export PATH="$VLLM_ENV/bin:$PATH"
 
 args=(
   serve "$VLLM_MODEL"
   --served-model-name "$VLLM_SERVED_MODEL_NAME"
-  --host "$VLLM_HOST"
-  --port "$VLLM_PORT"
+  --host "$DASBENCH_VLLM_HOST"
+  --port "$DASBENCH_VLLM_PORT"
   --api-key "$VLLM_API_KEY"
   --dtype "$VLLM_DTYPE"
   --tensor-parallel-size "$VLLM_TENSOR_PARALLEL_SIZE"
@@ -54,8 +60,9 @@ fi
 echo "Starting vLLM:"
 echo "  model: $VLLM_MODEL"
 echo "  served name: $VLLM_SERVED_MODEL_NAME"
-echo "  endpoint: http://$VLLM_HOST:$VLLM_PORT/v1"
+echo "  endpoint: http://$DASBENCH_VLLM_HOST:$DASBENCH_VLLM_PORT/v1"
 echo "  tensor parallel size: $VLLM_TENSOR_PARALLEL_SIZE"
 echo "  max model length: $VLLM_MAX_MODEL_LEN"
 
+unset VLLM_PORT
 exec "$VLLM_ENV/bin/vllm" "${args[@]}"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import unittest
 from unittest.mock import Mock, patch
@@ -7,11 +8,18 @@ from unittest.mock import Mock, patch
 from dasbench.integrations.chat_api import (
     CUSTOM_API_BASE_URL_ENV_VAR,
     CUSTOM_API_KEY_ENV_VAR,
+    CUSTOM_MAX_TOKENS_ENV_VAR,
     CUSTOM_MODEL_ENV_VAR,
     CUSTOM_PROVIDER,
     CUSTOM_REASONING_EFFORT_ENV_VAR,
     CUSTOM_TIMEOUT_SECONDS_ENV_VAR,
     DEFAULT_CUSTOM_TIMEOUT_SECONDS,
+    LLM_IDLE_LOCK_PATH_ENV_VAR,
+    LLM_IDLE_MAX_RUNNING_REQUESTS_ENV_VAR,
+    LLM_IDLE_MAX_WAITING_REQUESTS_ENV_VAR,
+    LLM_IDLE_METRICS_URL_ENV_VAR,
+    LLM_IDLE_POLL_SECONDS_ENV_VAR,
+    LLM_WAIT_FOR_IDLE_ENV_VAR,
     DEFAULT_PROVIDER,
     PROVIDER_ENV_VAR,
     CustomChatAPIConfig,
@@ -100,6 +108,13 @@ class ChatAPIConfigTests(unittest.TestCase):
             CUSTOM_MODEL_ENV_VAR: "custom-model",
             CUSTOM_REASONING_EFFORT_ENV_VAR: "medium",
             CUSTOM_TIMEOUT_SECONDS_ENV_VAR: "3600",
+            CUSTOM_MAX_TOKENS_ENV_VAR: "8192",
+            LLM_WAIT_FOR_IDLE_ENV_VAR: "1",
+            LLM_IDLE_POLL_SECONDS_ENV_VAR: "7",
+            LLM_IDLE_MAX_RUNNING_REQUESTS_ENV_VAR: "1",
+            LLM_IDLE_MAX_WAITING_REQUESTS_ENV_VAR: "2",
+            LLM_IDLE_METRICS_URL_ENV_VAR: "http://example.test/metrics",
+            LLM_IDLE_LOCK_PATH_ENV_VAR: "/tmp/example-dasbench-llm.lock",
         }
         with _without_dotenv(), patch.dict(os.environ, env, clear=True):
             config = load_chat_api_config(required=True)
@@ -111,6 +126,13 @@ class ChatAPIConfigTests(unittest.TestCase):
         self.assertEqual(config.model, "custom-model")
         self.assertEqual(config.reasoning_effort, "medium")
         self.assertEqual(config.timeout_seconds, 3600.0)
+        self.assertEqual(config.max_tokens, 8192)
+        self.assertTrue(config.wait_for_idle)
+        self.assertEqual(config.idle_poll_seconds, 7.0)
+        self.assertEqual(config.idle_max_running_requests, 1)
+        self.assertEqual(config.idle_max_waiting_requests, 2)
+        self.assertEqual(config.idle_metrics_url, "http://example.test/metrics")
+        self.assertEqual(config.idle_lock_path, "/tmp/example-dasbench-llm.lock")
         self.assertNotIn("api_key", config.public_dict())
 
     def test_missing_custom_provider_config_fails_clearly(self) -> None:
@@ -133,6 +155,7 @@ class ChatAPIRequestTests(unittest.TestCase):
             base_url="https://example.test/api",
             model="custom-model",
             reasoning_effort="medium",
+            max_tokens=8192,
         )
         with patch("dasbench.integrations.chat_api.build_chat_client", return_value=fake_client):
             result = create_chat_completion_raw(
@@ -150,6 +173,31 @@ class ChatAPIRequestTests(unittest.TestCase):
                 "response_format": {"type": "json_schema"},
                 "stream": False,
                 "reasoning_effort": "medium",
+                "max_tokens": 8192,
+                "timeout": DEFAULT_CUSTOM_TIMEOUT_SECONDS,
+            },
+        )
+
+    def test_custom_chat_request_can_omit_response_format(self) -> None:
+        fake_client = _FakeClient()
+        config = CustomChatAPIConfig(
+            api_key="custom-key",
+            base_url="https://example.test/api",
+            model="custom-model",
+        )
+        with patch("dasbench.integrations.chat_api.build_chat_client", return_value=fake_client):
+            result = create_chat_completion_raw(
+                config,
+                messages=[{"role": "user", "content": "hello"}],
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(
+            fake_client.raw_response.kwargs,
+            {
+                "messages": [{"role": "user", "content": "hello"}],
+                "model": "custom-model",
+                "stream": False,
                 "timeout": DEFAULT_CUSTOM_TIMEOUT_SECONDS,
             },
         )
@@ -197,6 +245,34 @@ class ChatAPIRequestTests(unittest.TestCase):
 
         self.assertEqual(fake_client.raw_response.create.call_count, 4)
 
+    def test_custom_chat_waits_for_vllm_idle_before_request(self) -> None:
+        fake_client = _FakeClient()
+        config = CustomChatAPIConfig(
+            api_key="custom-key",
+            base_url="http://localhost:8001/v1",
+            model="custom-model",
+            wait_for_idle=True,
+            idle_poll_seconds=0.01,
+            idle_lock_path="/tmp/dasbench-test-chat-idle.lock",
+        )
+
+        with patch("dasbench.integrations.chat_api.build_chat_client", return_value=fake_client), patch(
+            "dasbench.integrations.chat_api._read_vllm_queue_metrics",
+            side_effect=[
+                {"running": 1.0, "waiting": 0.0},
+                {"running": 0.0, "waiting": 0.0},
+            ],
+        ) as read_metrics, patch("dasbench.integrations.chat_api.time.sleep", return_value=None):
+            result = create_chat_completion_raw(
+                config,
+                messages=[{"role": "user", "content": "hello"}],
+                response_format={"type": "json_schema"},
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(read_metrics.call_count, 2)
+        self.assertEqual(fake_client.raw_response.kwargs["model"], "custom-model")
+
     def test_openai_request_shape_remains_unchanged(self) -> None:
         fake_client = _FakeClient()
         config = OpenAIAPIConfig(api_key="openai-key")
@@ -228,7 +304,7 @@ class ChatAPIRequestTests(unittest.TestCase):
         )
         create = Mock(
             return_value=_FakeRawCompletion(
-                '{"solution_py": "def solve(instance, analysis=None, manifest=None):\\n    return []", "notes": ""}'
+                "def solve(instance, analysis=None, manifest=None):\n    return []"
             )
         )
         config = LLMPVConfig(
@@ -250,16 +326,28 @@ class ChatAPIRequestTests(unittest.TestCase):
             create,
         ):
             text, metadata = _call_llm_for_solution(
-                messages=[{"role": "user", "content": "hello"}],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "constraints": ["Return JSON with solution_py."],
+                                "response_format": {"solution_py": "full Python module"},
+                            }
+                        ),
+                    }
+                ],
                 config=config,
             )
 
-        self.assertIn("solution_py", text)
+        self.assertIn("def solve", text)
         self.assertEqual(metadata["response_model"], "custom-model")
         create.assert_called_once()
         _, kwargs = create.call_args
-        self.assertIs(kwargs["response_format"]["json_schema"]["strict"], True)
+        self.assertNotIn("response_format", kwargs)
         self.assertEqual(kwargs["timeout"], 10.0)
+        prompt = json.loads(kwargs["messages"][0]["content"])
+        self.assertEqual(prompt["response_format"], "raw Python module text defining solve(...) or build_solver(...)")
 
     def test_llm_pv_custom_provider_rejects_code_interpreter(self) -> None:
         from benchmarks.llm_pv_benchmark import LLMPVConfig, _call_llm_for_solution
