@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import time
@@ -35,13 +36,21 @@ SOLUTION_RESPONSE_SCHEMA_PATH = PACKAGE_ROOT / "schemas" / "solution_code_bundle
 PROMPT_JSON_CHAR_LIMIT = 12_000
 PROMPT_CODE_CHAR_LIMIT = 10_000
 ANALYSIS_RETRY_ENV_VAR = "DASBENCH_ANALYSIS_RETRY_LIMIT"
-DEFAULT_ANALYSIS_RETRY_LIMIT = 2
+DEFAULT_ANALYSIS_RETRY_LIMIT = 3
+CODE_REPAIR_ENV_VAR = "DASBENCH_CODE_REPAIR_LIMIT"
+DEFAULT_CODE_REPAIR_LIMIT = 3
+SOLUTION_REPAIR_ENV_VAR = "DASBENCH_SOLUTION_REPAIR_LIMIT"
+DEFAULT_SOLUTION_REPAIR_LIMIT = 3
 
 
 class GenerationDebugError(RuntimeError):
     def __init__(self, message: str, *, metadata: dict[str, object]) -> None:
         super().__init__(message)
         self.metadata = metadata
+
+
+class GeneratedCodeValidationError(ValueError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -652,6 +661,7 @@ def _build_analyze_messages(
         },
         "constraints": [
             "Return runnable Python code only in the schema field analyze_py.",
+            "Graph instances expose their public edge list as instance['edges']; do not treat train_summary sample edge_prefix snippets as a runtime field.",
             "Use only the Python standard library plus already-available dasbench modules.",
             "The analysis output must stay compact and JSON-serializable.",
             "Do not assume access to optimum labels in the candidate-facing dataset.",
@@ -682,6 +692,26 @@ def _analysis_retry_limit() -> int:
         raise ValueError(f"{ANALYSIS_RETRY_ENV_VAR} must be a nonnegative integer, got {raw_value!r}.") from exc
 
 
+def _code_repair_limit() -> int:
+    raw_value = os.environ.get(CODE_REPAIR_ENV_VAR)
+    if raw_value is None or not raw_value.strip():
+        return DEFAULT_CODE_REPAIR_LIMIT
+    try:
+        return max(0, int(raw_value))
+    except ValueError as exc:
+        raise ValueError(f"{CODE_REPAIR_ENV_VAR} must be a nonnegative integer, got {raw_value!r}.") from exc
+
+
+def _solution_repair_limit() -> int:
+    raw_value = os.environ.get(SOLUTION_REPAIR_ENV_VAR)
+    if raw_value is None or not raw_value.strip():
+        return DEFAULT_SOLUTION_REPAIR_LIMIT
+    try:
+        return max(0, int(raw_value))
+    except ValueError as exc:
+        raise ValueError(f"{SOLUTION_REPAIR_ENV_VAR} must be a nonnegative integer, got {raw_value!r}.") from exc
+
+
 def _archive_failed_analysis_attempt(
     candidate_dir: Path,
     *,
@@ -695,6 +725,39 @@ def _archive_failed_analysis_attempt(
         (candidate_dir / f"analyze_failed_attempt_{suffix}.py").write_text(analyze_py, encoding="utf-8")
     (candidate_dir / f"analyze_failed_attempt_{suffix}.txt").write_text(
         f"{type(exc).__name__}: {exc}\n",
+        encoding="utf-8",
+    )
+
+
+def _archive_invalid_code_attempt(
+    candidate_dir: Path,
+    *,
+    stage_name: str,
+    attempt: int,
+    code: str,
+    exc: Exception,
+) -> None:
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    suffix = f"{attempt:02d}"
+    (candidate_dir / f"{stage_name}_invalid_attempt_{suffix}.py").write_text(code, encoding="utf-8")
+    (candidate_dir / f"{stage_name}_invalid_attempt_{suffix}.txt").write_text(
+        f"{type(exc).__name__}: {exc}\n",
+        encoding="utf-8",
+    )
+
+
+def _archive_failed_solution_attempt(
+    candidate_dir: Path,
+    *,
+    attempt: int,
+    solution_py: str,
+    train_eval: dict[str, object],
+) -> None:
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    suffix = f"{attempt:02d}"
+    (candidate_dir / f"solution_failed_eval_attempt_{suffix}.py").write_text(solution_py, encoding="utf-8")
+    (candidate_dir / f"solution_failed_eval_attempt_{suffix}.json").write_text(
+        json.dumps(train_eval, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
@@ -727,6 +790,8 @@ def _build_solution_messages(
         },
         "constraints": [
             "Return runnable Python code only in the schema field solution_py.",
+            "Runtime graph instances expose their edge list as instance['edges']; do not use edge_prefix except as an optional fallback.",
+            "The returned solution must be feasible for the problem; for MIS, never return adjacent vertices together.",
             "Use the analysis output instead of redoing expensive training-time work online.",
             "Keep per-instance runtime low.",
             "The solver will be run unchanged on validation and test instances.",
@@ -769,6 +834,7 @@ def _build_solver_only_analyze_messages(
         },
         "constraints": [
             "Return runnable Python code only in the schema field analyze_py.",
+            "Graph instances expose their public edge list as instance['edges']; do not treat train_summary sample edge_prefix snippets as a runtime field.",
             "Use only the Python standard library plus already-available dasbench modules.",
             "The analysis output must stay compact and JSON-serializable.",
             "Handle train_instances=[] gracefully. If there are no training instances, use manifest metadata only and return a compact fallback analysis instead of failing.",
@@ -819,6 +885,8 @@ def _build_solver_only_solution_messages(
         },
         "constraints": [
             "Return runnable Python code only in the schema field solution_py.",
+            "Runtime graph instances expose their edge list as instance['edges']; do not use edge_prefix except as an optional fallback.",
+            "The returned solution must be feasible for the problem; for MIS, never return adjacent vertices together.",
             "Use the analysis output instead of redoing expensive training-time work online.",
             "Keep per-instance runtime low.",
             "The solver will be run unchanged on validation and test instances.",
@@ -1163,6 +1231,347 @@ def _generate_stage_output(
     return code, notes, metadata
 
 
+def _validate_generated_python_code(
+    code: str,
+    *,
+    filename: str,
+    required_functions: tuple[str, ...],
+) -> None:
+    try:
+        tree = ast.parse(code, filename=filename)
+    except SyntaxError as exc:
+        location = f"line {exc.lineno}" if exc.lineno is not None else "unknown line"
+        if exc.offset is not None:
+            location = f"{location}, column {exc.offset}"
+        raise GeneratedCodeValidationError(f"{filename} has invalid Python syntax at {location}: {exc.msg}") from exc
+
+    top_level_functions = {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    if required_functions and not any(name in top_level_functions for name in required_functions):
+        expected = " or ".join(f"{name}(...)" for name in required_functions)
+        raise GeneratedCodeValidationError(f"{filename} must define top-level {expected}.")
+
+
+def _original_prompt_payload(messages: list[dict[str, str]]) -> object:
+    for message in reversed(messages):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content", "")
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return content
+    return None
+
+
+def _build_code_repair_messages(
+    *,
+    original_messages: list[dict[str, str]],
+    stage_name: str,
+    filename: str,
+    code_field: str,
+    required_functions: tuple[str, ...],
+    previous_code: str,
+    previous_notes: str,
+    validation_error: str,
+    failed_attempt: int,
+    max_repair_attempts: int,
+) -> list[dict[str, str]]:
+    expected_interface = " or ".join(f"{name}(...)" for name in required_functions)
+    prompt_payload = {
+        "stage": f"{stage_name}_repair",
+        "task": f"Repair and return full replacement contents for {filename} only.",
+        "failed_attempt": failed_attempt,
+        "max_repair_attempts": max_repair_attempts,
+        "validation_error": validation_error,
+        "expected_interface": expected_interface,
+        "previous_code": _prepare_text_for_prompt(previous_code),
+        "previous_notes": _prepare_text_for_prompt(previous_notes, max_chars=4_000),
+        "original_generation_request": _original_prompt_payload(original_messages),
+        "constraints": [
+            f"Return runnable Python code only in the schema field {code_field}.",
+            "Return a complete replacement file, not a patch.",
+            "Do not include Markdown fences or explanatory text inside the code field.",
+            "Fix the validation error directly while preserving the intended algorithm where possible.",
+            "Keep the implementation within the original interface and standard-library constraints.",
+        ],
+        "response_format": {
+            code_field: f"full contents of {filename} as a string",
+            "notes": "brief explanation of the repair",
+        },
+    }
+    system_content = original_messages[0].get("content", "") if original_messages else _load_system_prompt()
+    return [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": json.dumps(prompt_payload, indent=2, sort_keys=True)},
+    ]
+
+
+def _summary_needs_solution_repair(summary: dict[str, object]) -> bool:
+    if summary.get("error"):
+        return True
+    feasibility = summary.get("feasibility_rate")
+    try:
+        return float(feasibility) < 1.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _build_solution_semantic_repair_messages(
+    *,
+    original_messages: list[dict[str, str]],
+    analyze_py: str,
+    analysis_output: object,
+    previous_solution_py: str,
+    previous_notes: str,
+    train_eval: dict[str, object],
+    failed_attempt: int,
+    max_repair_attempts: int,
+) -> list[dict[str, str]]:
+    prompt_payload = {
+        "stage": "solution_semantic_repair",
+        "task": "Repair solution.py so it returns feasible, higher-quality solutions under the original problem interface.",
+        "failed_attempt": failed_attempt,
+        "max_repair_attempts": max_repair_attempts,
+        "train_evaluation_summary": _prepare_json_for_prompt(train_eval),
+        "failure_cases": _prepare_json_for_prompt(train_eval.get("failure_cases", [])),
+        "previous_solution_py": _prepare_text_for_prompt(previous_solution_py),
+        "previous_notes": _prepare_text_for_prompt(previous_notes, max_chars=4_000),
+        "current_analyze_py": _prepare_text_for_prompt(analyze_py),
+        "current_analysis_output": _prepare_json_for_prompt(analysis_output),
+        "original_generation_request": _original_prompt_payload(original_messages),
+        "interfaces": {
+            "solution.py": "define solve(instance, analysis=None, manifest=None) -> object",
+        },
+        "constraints": [
+            "Return a complete replacement solution.py in the solution_py schema field.",
+            "Do not include Markdown fences or explanatory text inside the code field.",
+            "Fix the observed train-set failures directly.",
+            "Runtime graph instances expose their edge list as instance['edges']; do not use edge_prefix except as an optional fallback.",
+            "The returned solution must be feasible for every instance; for MIS, never return adjacent vertices together.",
+            "Prefer a robust feasible fallback over an aggressive infeasible solution.",
+            "Keep per-instance runtime low.",
+        ],
+        "response_format": {
+            "solution_py": "full contents of solution.py as a string",
+            "notes": "brief explanation of the semantic repair",
+        },
+    }
+    system_content = original_messages[0].get("content", "") if original_messages else _load_system_prompt()
+    return [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": json.dumps(prompt_payload, indent=2, sort_keys=True)},
+    ]
+
+
+def _generate_validated_stage_output(
+    *,
+    messages: list[dict[str, str]],
+    candidate_dir: Path,
+    stage_name: str,
+    response_schema_path: Path,
+    code_field: str,
+    filename: str,
+    required_functions: tuple[str, ...],
+) -> tuple[str, str, dict[str, object]]:
+    max_repairs = _code_repair_limit()
+    current_messages = messages
+    repair_history: list[dict[str, object]] = []
+    last_metadata: dict[str, object] | None = None
+    last_error: Exception | None = None
+
+    for attempt in range(max_repairs + 1):
+        code, notes, metadata = _generate_stage_output(
+            messages=current_messages,
+            candidate_dir=candidate_dir,
+            stage_name=stage_name,
+            response_schema_path=response_schema_path,
+            code_field=code_field,
+        )
+        last_metadata = metadata
+        try:
+            _validate_generated_python_code(
+                code,
+                filename=filename,
+                required_functions=required_functions,
+            )
+            metadata = {
+                **metadata,
+                "code_validation": {
+                    "status": "passed",
+                    "filename": filename,
+                    "required_functions": list(required_functions),
+                    "repair_attempts_used": attempt,
+                    "max_repair_attempts": max_repairs,
+                },
+            }
+            if repair_history:
+                metadata["repair_history"] = repair_history
+                metadata["original_request_messages"] = messages
+            return code, notes, metadata
+        except GeneratedCodeValidationError as exc:
+            last_error = exc
+            _archive_invalid_code_attempt(
+                candidate_dir,
+                stage_name=stage_name,
+                attempt=attempt,
+                code=code,
+                exc=exc,
+            )
+            repair_history.append(
+                {
+                    "attempt": attempt,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "archived_code": str(candidate_dir / f"{stage_name}_invalid_attempt_{attempt:02d}.py"),
+                }
+            )
+            if attempt >= max_repairs:
+                break
+            current_messages = _build_code_repair_messages(
+                original_messages=messages,
+                stage_name=stage_name,
+                filename=filename,
+                code_field=code_field,
+                required_functions=required_functions,
+                previous_code=code,
+                previous_notes=notes,
+                validation_error=f"{type(exc).__name__}: {exc}",
+                failed_attempt=attempt,
+                max_repair_attempts=max_repairs,
+            )
+
+    assert last_error is not None
+    raise GenerationDebugError(
+        f"Generated {filename} failed validation after {max_repairs} repair attempts: {last_error}",
+        metadata={
+            **(last_metadata or {}),
+            "code_validation": {
+                "status": "failed",
+                "filename": filename,
+                "required_functions": list(required_functions),
+                "max_repair_attempts": max_repairs,
+                "error": f"{type(last_error).__name__}: {last_error}",
+            },
+            "repair_history": repair_history,
+            "original_request_messages": messages,
+        },
+    )
+
+
+def _evaluate_solution_with_semantic_repairs(
+    *,
+    problem_name: str,
+    plan_slug: str,
+    candidate_dir: Path,
+    evaluation_dir: Path,
+    manifest: dict[str, object],
+    train_instances_full: list[dict[str, object]],
+    validation_instances_full: list[dict[str, object]],
+    analyze_py: str,
+    analysis_output: object,
+    solution_py: str,
+    solution_notes: str,
+    solution_messages: list[dict[str, str]],
+    timing: dict[str, float],
+) -> tuple[str, str, dict[str, object], dict[str, object]]:
+    max_repairs = _solution_repair_limit()
+    semantic_repairs_used = 0
+    train_eval: dict[str, object] | None = None
+
+    for attempt in range(max_repairs + 1):
+        solver_build_start = time.perf_counter()
+        try:
+            solver = build_solver(candidate_dir, analysis=analysis_output, manifest=manifest)
+            timing[f"solver_build_attempt_{attempt:02d}_wall_ms"] = (
+                time.perf_counter() - solver_build_start
+            ) * 1000.0
+            train_eval_start = time.perf_counter()
+            train_eval = evaluate_solver(problem_name, plan_slug, solver, train_instances_full, split="train")
+            timing[f"train_eval_attempt_{attempt:02d}_wall_ms"] = (
+                time.perf_counter() - train_eval_start
+            ) * 1000.0
+        except Exception as exc:
+            timing[f"solver_build_attempt_{attempt:02d}_wall_ms"] = (
+                time.perf_counter() - solver_build_start
+            ) * 1000.0
+            train_eval = failed_summary(
+                plan_slug,
+                "train",
+                len(train_instances_full),
+                f"{type(exc).__name__}: {exc}",
+            )
+
+        if not _summary_needs_solution_repair(train_eval) or attempt >= max_repairs:
+            break
+
+        _archive_failed_solution_attempt(
+            candidate_dir,
+            attempt=attempt,
+            solution_py=solution_py,
+            train_eval=train_eval,
+        )
+        semantic_repairs_used += 1
+        repair_messages = _build_solution_semantic_repair_messages(
+            original_messages=solution_messages,
+            analyze_py=analyze_py,
+            analysis_output=analysis_output,
+            previous_solution_py=solution_py,
+            previous_notes=solution_notes,
+            train_eval=train_eval,
+            failed_attempt=attempt,
+            max_repair_attempts=max_repairs,
+        )
+        repair_generation_start = time.perf_counter()
+        solution_py, solution_notes, solution_metadata = _generate_validated_stage_output(
+            messages=repair_messages,
+            candidate_dir=candidate_dir,
+            stage_name="solution",
+            response_schema_path=SOLUTION_RESPONSE_SCHEMA_PATH,
+            code_field="solution_py",
+            filename="solution.py",
+            required_functions=("solve", "build_solver"),
+        )
+        solution_metadata = {
+            **solution_metadata,
+            "solution_semantic_repair_attempt": attempt + 1,
+            "previous_train_evaluation": train_eval,
+        }
+        _write_stage_artifacts(
+            candidate_dir,
+            stage_name="solution",
+            filename="solution.py",
+            code=solution_py,
+            notes=solution_notes,
+            metadata=solution_metadata,
+        )
+        timing[f"solution_semantic_repair_attempt_{attempt + 1:02d}_wall_ms"] = (
+            time.perf_counter() - repair_generation_start
+        ) * 1000.0
+
+    assert train_eval is not None
+    timing["solution_semantic_repairs_used"] = float(semantic_repairs_used)
+    timing["solver_build_wall_ms"] = timing.get("solver_build_attempt_00_wall_ms", 0.0)
+    timing["train_eval_wall_ms"] = timing.get("train_eval_attempt_00_wall_ms", 0.0)
+
+    try:
+        solver = build_solver(candidate_dir, analysis=analysis_output, manifest=manifest)
+        validation_eval_start = time.perf_counter()
+        validation_eval = evaluate_solver(problem_name, plan_slug, solver, validation_instances_full, split="validation")
+        timing["validation_eval_wall_ms"] = (time.perf_counter() - validation_eval_start) * 1000.0
+    except Exception as exc:
+        validation_eval = failed_summary(
+            plan_slug,
+            "validation",
+            len(validation_instances_full),
+            f"{type(exc).__name__}: {exc}",
+        )
+
+    return solution_py, solution_notes, train_eval, validation_eval
+
+
 def _evaluate_plan(
     plan: LLMPlan,
     *,
@@ -1256,12 +1665,14 @@ def _evaluate_plan(
         )
         try:
             analyze_generation_start = time.perf_counter()
-            analyze_py, analyze_notes, analyze_metadata = _generate_stage_output(
+            analyze_py, analyze_notes, analyze_metadata = _generate_validated_stage_output(
                 messages=analyze_messages,
                 candidate_dir=candidate_dir,
                 stage_name="analyze",
                 response_schema_path=ANALYZE_RESPONSE_SCHEMA_PATH,
                 code_field="analyze_py",
+                filename="analyze.py",
+                required_functions=("analyze",),
             )
             _write_stage_artifacts(
                 candidate_dir,
@@ -1355,12 +1766,14 @@ def _evaluate_plan(
                 )
                 try:
                     analyze_generation_start = time.perf_counter()
-                    analyze_py, analyze_notes, analyze_metadata = _generate_stage_output(
+                    analyze_py, analyze_notes, analyze_metadata = _generate_validated_stage_output(
                         messages=analyze_messages,
                         candidate_dir=candidate_dir,
                         stage_name="analyze",
                         response_schema_path=ANALYZE_RESPONSE_SCHEMA_PATH,
                         code_field="analyze_py",
+                        filename="analyze.py",
+                        required_functions=("analyze",),
                     )
                     analyze_metadata = {
                         **analyze_metadata,
@@ -1433,24 +1846,26 @@ def _evaluate_plan(
         else None
     )
     solution_notes = (_read_text_if_exists(candidate_dir / "solution_notes.txt") or "").strip()
+    solution_messages = _build_solution_messages(
+        manifest=manifest,
+        train_summary=train_summary,
+        plan=plan,
+        parent_record=parent_record,
+        analyze_py=analyze_py,
+        analysis_output=analysis_output,
+        hypothesis=hypothesis,
+    )
     if solution_py is None:
-        solution_messages = _build_solution_messages(
-            manifest=manifest,
-            train_summary=train_summary,
-            plan=plan,
-            parent_record=parent_record,
-            analyze_py=analyze_py,
-            analysis_output=analysis_output,
-            hypothesis=hypothesis,
-        )
         try:
             solution_generation_start = time.perf_counter()
-            solution_py, solution_notes, solution_metadata = _generate_stage_output(
+            solution_py, solution_notes, solution_metadata = _generate_validated_stage_output(
                 messages=solution_messages,
                 candidate_dir=candidate_dir,
                 stage_name="solution",
                 response_schema_path=SOLUTION_RESPONSE_SCHEMA_PATH,
                 code_field="solution_py",
+                filename="solution.py",
+                required_functions=("solve", "build_solver"),
             )
             _write_stage_artifacts(
                 candidate_dir,
@@ -1494,15 +1909,21 @@ def _evaluate_plan(
     validation_eval = _read_json_dict_if_exists(_summary_path(evaluation_dir, "validation"))
     if train_eval is None or validation_eval is None:
         try:
-            solver_build_start = time.perf_counter()
-            solver = build_solver(candidate_dir, analysis=analysis_output, manifest=manifest)
-            timing["solver_build_wall_ms"] = (time.perf_counter() - solver_build_start) * 1000.0
-            train_eval_start = time.perf_counter()
-            train_eval = evaluate_solver(problem_name, plan.slug(), solver, train_instances_full, split="train")
-            timing["train_eval_wall_ms"] = (time.perf_counter() - train_eval_start) * 1000.0
-            validation_eval_start = time.perf_counter()
-            validation_eval = evaluate_solver(problem_name, plan.slug(), solver, validation_instances_full, split="validation")
-            timing["validation_eval_wall_ms"] = (time.perf_counter() - validation_eval_start) * 1000.0
+            solution_py, solution_notes, train_eval, validation_eval = _evaluate_solution_with_semantic_repairs(
+                problem_name=problem_name,
+                plan_slug=plan.slug(),
+                candidate_dir=candidate_dir,
+                evaluation_dir=evaluation_dir,
+                manifest=manifest,
+                train_instances_full=train_instances_full,
+                validation_instances_full=validation_instances_full,
+                analyze_py=analyze_py,
+                analysis_output=analysis_output,
+                solution_py=solution_py,
+                solution_notes=solution_notes,
+                solution_messages=solution_messages,
+                timing=timing,
+            )
         except Exception as exc:
             train_eval = failed_summary(plan.slug(), "train", len(train_instances_full), f"{type(exc).__name__}: {exc}")
             validation_eval = failed_summary(plan.slug(), "validation", len(validation_instances_full), f"{type(exc).__name__}: {exc}")
@@ -1568,12 +1989,14 @@ def _evaluate_solver_only_plan(
         )
         try:
             analyze_generation_start = time.perf_counter()
-            analyze_py, analyze_notes, analyze_metadata = _generate_stage_output(
+            analyze_py, analyze_notes, analyze_metadata = _generate_validated_stage_output(
                 messages=analyze_messages,
                 candidate_dir=candidate_dir,
                 stage_name="analyze",
                 response_schema_path=ANALYZE_RESPONSE_SCHEMA_PATH,
                 code_field="analyze_py",
+                filename="analyze.py",
+                required_functions=("analyze",),
             )
             _write_stage_artifacts(
                 candidate_dir,
@@ -1654,23 +2077,25 @@ def _evaluate_solver_only_plan(
         else None
     )
     solution_notes = (_read_text_if_exists(candidate_dir / "solution_notes.txt") or "").strip()
+    solution_messages = _build_solver_only_solution_messages(
+        manifest=manifest,
+        train_summary=train_summary,
+        plan=plan,
+        parent_record=parent_record,
+        analyze_py=analyze_py,
+        analysis_output=analysis_output,
+    )
     if solution_py is None:
-        solution_messages = _build_solver_only_solution_messages(
-            manifest=manifest,
-            train_summary=train_summary,
-            plan=plan,
-            parent_record=parent_record,
-            analyze_py=analyze_py,
-            analysis_output=analysis_output,
-        )
         try:
             solution_generation_start = time.perf_counter()
-            solution_py, solution_notes, solution_metadata = _generate_stage_output(
+            solution_py, solution_notes, solution_metadata = _generate_validated_stage_output(
                 messages=solution_messages,
                 candidate_dir=candidate_dir,
                 stage_name="solution",
                 response_schema_path=SOLUTION_RESPONSE_SCHEMA_PATH,
                 code_field="solution_py",
+                filename="solution.py",
+                required_functions=("solve", "build_solver"),
             )
             _write_stage_artifacts(
                 candidate_dir,
@@ -1714,15 +2139,21 @@ def _evaluate_solver_only_plan(
     validation_eval = _read_json_dict_if_exists(_summary_path(evaluation_dir, "validation"))
     if train_eval is None or validation_eval is None:
         try:
-            solver_build_start = time.perf_counter()
-            solver = build_solver(candidate_dir, analysis=analysis_output, manifest=manifest)
-            timing["solver_build_wall_ms"] = (time.perf_counter() - solver_build_start) * 1000.0
-            train_eval_start = time.perf_counter()
-            train_eval = evaluate_solver(problem_name, plan.slug(), solver, train_instances_full, split="train")
-            timing["train_eval_wall_ms"] = (time.perf_counter() - train_eval_start) * 1000.0
-            validation_eval_start = time.perf_counter()
-            validation_eval = evaluate_solver(problem_name, plan.slug(), solver, validation_instances_full, split="validation")
-            timing["validation_eval_wall_ms"] = (time.perf_counter() - validation_eval_start) * 1000.0
+            solution_py, solution_notes, train_eval, validation_eval = _evaluate_solution_with_semantic_repairs(
+                problem_name=problem_name,
+                plan_slug=plan.slug(),
+                candidate_dir=candidate_dir,
+                evaluation_dir=evaluation_dir,
+                manifest=manifest,
+                train_instances_full=train_instances_full,
+                validation_instances_full=validation_instances_full,
+                analyze_py=analyze_py,
+                analysis_output=analysis_output,
+                solution_py=solution_py,
+                solution_notes=solution_notes,
+                solution_messages=solution_messages,
+                timing=timing,
+            )
         except Exception as exc:
             train_eval = failed_summary(plan.slug(), "train", len(train_instances_full), f"{type(exc).__name__}: {exc}")
             validation_eval = failed_summary(plan.slug(), "validation", len(validation_instances_full), f"{type(exc).__name__}: {exc}")
@@ -1745,6 +2176,58 @@ def _evaluate_solver_only_plan(
         "selection": selection,
         "timing": timing,
     }
+
+
+def _evaluate_best_candidate_test(
+    *,
+    problem_name: str,
+    best_candidate: dict[str, object],
+    test_full: list[dict[str, object]],
+    analysis: object | None,
+    manifest: dict[str, object],
+    timing_reporter: BenchmarkTimingReporter | None,
+    analysis_error: str | None = None,
+) -> None:
+    best_candidate["timing"] = dict(best_candidate.get("timing", {}))
+    slug = str(best_candidate["slug"])
+    candidate_dir = Path(str(best_candidate["candidate_dir"]))
+    evaluation_dir = Path(str(best_candidate["evaluation_dir"]))
+    solution_path = candidate_dir / "solution.py"
+    final_test_error = None
+    if analysis is None:
+        final_test_error = analysis_error or "No successful analysis output is available for the selected candidate."
+    elif not solution_path.exists():
+        final_test_error = "No solution.py is available for the selected candidate."
+
+    if final_test_error is not None:
+        best_candidate["test"] = failed_summary(
+            slug,
+            "test",
+            len(test_full),
+            final_test_error,
+        )
+        best_candidate["timing"]["best_candidate_test_wall_ms"] = 0.0
+    else:
+        best_test_start = time.perf_counter()
+        try:
+            solver = build_solver(candidate_dir, analysis=analysis, manifest=manifest)
+            best_candidate["test"] = evaluate_solver(problem_name, slug, solver, test_full, split="test")
+        except Exception as exc:
+            best_candidate["test"] = failed_summary(
+                slug,
+                "test",
+                len(test_full),
+                f"{type(exc).__name__}: {exc}",
+            )
+        best_candidate["timing"]["best_candidate_test_wall_ms"] = (time.perf_counter() - best_test_start) * 1000.0
+
+    write_summary(evaluation_dir / "test_summary.json", best_candidate["test"])
+    if timing_reporter is not None:
+        timing_reporter.record_best_candidate_test(
+            wall_ms=float(best_candidate["timing"]["best_candidate_test_wall_ms"]),
+            summary=best_candidate["test"],
+            slug=slug,
+        )
 
 
 def run_llm_synthesis_loop(
@@ -1831,47 +2314,21 @@ def run_llm_synthesis_loop(
     analysis = best_candidate.get("analysis_output")
     if analysis is None:
         analysis = _read_json_value_if_exists(Path(best_candidate["evaluation_dir"]) / "analysis.json")
-    best_candidate["timing"] = dict(best_candidate.get("timing", {}))
-    solution_path = Path(best_candidate["candidate_dir"]) / "solution.py"
-    final_test_error = None
-    if analysis is None:
-        final_test_error = "No successful analysis output is available for the selected candidate."
-    elif not solution_path.exists():
-        final_test_error = "No solution.py is available for the selected candidate."
-
-    if final_test_error is not None:
-        best_candidate["test"] = failed_summary(
-            str(best_candidate["slug"]),
-            "test",
-            len(test_full),
-            final_test_error,
-        )
-        best_candidate["timing"]["best_candidate_test_wall_ms"] = 0.0
-        write_summary(Path(best_candidate["evaluation_dir"]) / "test_summary.json", best_candidate["test"])
-        if timing_reporter is not None:
-            timing_reporter.record_best_candidate_test(
-                wall_ms=0.0,
-                summary=best_candidate["test"],
-                slug=str(best_candidate["slug"]),
-            )
-    else:
+    if analysis is not None:
         analysis_dir = output_dir / "best_candidate_analysis"
         analysis_dir.mkdir(parents=True, exist_ok=True)
         (analysis_dir / "analysis.json").write_text(
             json.dumps(analysis, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        solver = build_solver(Path(best_candidate["candidate_dir"]), analysis=analysis, manifest=manifest)
-        best_test_start = time.perf_counter()
-        best_candidate["test"] = evaluate_solver(problem_name, best_candidate["slug"], solver, test_full, split="test")
-        best_candidate["timing"]["best_candidate_test_wall_ms"] = (time.perf_counter() - best_test_start) * 1000.0
-        write_summary(Path(best_candidate["evaluation_dir"]) / "test_summary.json", best_candidate["test"])
-        if timing_reporter is not None:
-            timing_reporter.record_best_candidate_test(
-                wall_ms=best_candidate["timing"]["best_candidate_test_wall_ms"],
-                summary=best_candidate["test"],
-                slug=str(best_candidate["slug"]),
-            )
+    _evaluate_best_candidate_test(
+        problem_name=problem_name,
+        best_candidate=best_candidate,
+        test_full=test_full,
+        analysis=analysis,
+        manifest=manifest,
+        timing_reporter=timing_reporter,
+    )
 
     history_path = output_dir / "performance_history.json"
     write_history(history_path, history)
@@ -1980,24 +2437,26 @@ def run_llm_no_hint_synthesis_loop(
         )
 
     best_candidate = max(evaluated.values(), key=lambda record: selection_sort_key(record["selection"]))
-    analysis = run_analysis(
-        Path(best_candidate["candidate_dir"]),
-        train_public,
-        manifest=manifest,
-        artifact_dir=output_dir / "best_candidate_analysis",
-    )
-    solver = build_solver(Path(best_candidate["candidate_dir"]), analysis=analysis, manifest=manifest)
-    best_candidate["timing"] = dict(best_candidate.get("timing", {}))
-    best_test_start = time.perf_counter()
-    best_candidate["test"] = evaluate_solver(problem_name, best_candidate["slug"], solver, test_full, split="test")
-    best_candidate["timing"]["best_candidate_test_wall_ms"] = (time.perf_counter() - best_test_start) * 1000.0
-    write_summary(Path(best_candidate["evaluation_dir"]) / "test_summary.json", best_candidate["test"])
-    if timing_reporter is not None:
-        timing_reporter.record_best_candidate_test(
-            wall_ms=best_candidate["timing"]["best_candidate_test_wall_ms"],
-            summary=best_candidate["test"],
-            slug=str(best_candidate["slug"]),
+    analysis_error = None
+    try:
+        analysis = run_analysis(
+            Path(str(best_candidate["candidate_dir"])),
+            train_public,
+            manifest=manifest,
+            artifact_dir=output_dir / "best_candidate_analysis",
         )
+    except Exception as exc:
+        analysis = None
+        analysis_error = f"{type(exc).__name__}: {exc}"
+    _evaluate_best_candidate_test(
+        problem_name=problem_name,
+        best_candidate=best_candidate,
+        test_full=test_full,
+        analysis=analysis,
+        manifest=manifest,
+        timing_reporter=timing_reporter,
+        analysis_error=analysis_error,
+    )
 
     history_path = output_dir / "performance_history.json"
     write_history(history_path, history)

@@ -95,13 +95,30 @@ Useful server overrides:
 VLLM_MODEL=Qwen/Qwen2.5-Coder-32B-Instruct \
 VLLM_SERVED_MODEL_NAME=local-coder-32b \
 CUSTOM_CHAT_MODEL=local-coder-32b \
+CUSTOM_CHAT_MAX_TOKENS=8192 \
 VLLM_TENSOR_PARALLEL_SIZE=2 \
+DASBENCH_VLLM_PORT=8001 \
 VLLM_MAX_MODEL_LEN=32768 \
 scripts/start_local_vllm.sh
 ```
 
 For vLLM, leave `CUSTOM_CHAT_REASONING_EFFORT` unset unless the specific server
 version and model accept that OpenAI-specific field.
+`CUSTOM_CHAT_MAX_TOKENS` caps each local structured response, and
+`DASBENCH_LLM_WAIT_FOR_IDLE=1` serializes local vLLM generation requests across
+concurrent DasBench runs and waits for `/metrics` to report no running or
+queued requests before starting inference.
+`DASBENCH_CODE_REPAIR_LIMIT` controls how many times invalid generated
+`analyze.py` or `solution.py` code is repaired before the candidate is marked
+failed. `DASBENCH_ANALYSIS_RETRY_LIMIT` controls repair attempts for generated
+`analyze.py` code that passes validation but fails during execution.
+`DASBENCH_SOLUTION_REPAIR_LIMIT` controls repair attempts for generated
+`solution.py` code that passes validation but produces infeasible or erroring
+train-set solutions.
+`DASBENCH_SOLVER_TIMEOUT_SECONDS` caps each generated solver call per instance;
+set it to `0` to disable the guardrail. `DASBENCH_SOLVER_MEMORY_LIMIT_MB` caps
+solver address-space usage in MiB and records memory-limit hits as failed
+candidates; set it to `0` to disable the guardrail.
 
 ## Quick Start
 
