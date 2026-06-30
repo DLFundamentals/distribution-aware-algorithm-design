@@ -102,6 +102,53 @@ class AgentPromptSanitizationTests(unittest.TestCase):
         self.assertEqual(solution_payload["current_hypothesis"]["diversity_key"], "anchor")
         self.assertIn("unknown structured distribution", solution_payload["manifest"]["distribution_note"])
 
+    def test_dfvs_prompts_use_arcs_schema(self) -> None:
+        manifest = {
+            "problem": "dfvs",
+            "family": "pace2022_dfvs_heuristic_private",
+            "metric_definition": {"primary": "normalized_quality"},
+            "instance_schema_version": "dfvs.v1",
+            "instance_params": {},
+        }
+        train_summary = {
+            "problem": "dfvs",
+            "family": "pace2022_dfvs_heuristic_private",
+            "num_instances": 1,
+            "runtime_instance_fields": {
+                "arcs": "list of directed 0-based [tail, head] pairs",
+            },
+            "sample_instances": [{"arc_prefix": [[0, 1]]}],
+        }
+        plan = LLMPlan(iteration=0, slot=0, focus="test")
+
+        analyze_payload = json.loads(
+            _build_analyze_messages(
+                manifest=manifest,
+                train_summary=train_summary,
+                plan=plan,
+                parent_record=None,
+                hypothesis=None,
+            )[1]["content"]
+        )
+        solution_payload = json.loads(
+            _build_solution_messages(
+                manifest=manifest,
+                train_summary=train_summary,
+                plan=plan,
+                parent_record=None,
+                analyze_py="def analyze(train_instances, manifest=None):\n    return {}\n",
+                analysis_output={},
+                hypothesis=None,
+            )[1]["content"]
+        )
+
+        analyze_constraints = "\n".join(analyze_payload["constraints"])
+        solution_constraints = "\n".join(solution_payload["constraints"])
+        self.assertIn("instance['arcs']", analyze_constraints)
+        self.assertIn("instance['arcs']", solution_constraints)
+        self.assertIn("do not read instance['edges']", solution_constraints)
+        self.assertNotIn("Runtime graph instances expose their edge list as instance['edges']", solution_constraints)
+
     def test_candidate_runtime_manifest_is_sanitized(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="dasbench-agent-sanitize-"))
         candidate_dir = root / "candidate"

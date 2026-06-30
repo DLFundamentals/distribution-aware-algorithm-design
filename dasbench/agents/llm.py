@@ -240,6 +240,31 @@ def _prompt_train_summary(summary: dict[str, object]) -> dict[str, object]:
     return sanitized
 
 
+def _runtime_instance_constraints(problem_name: str, *, for_analysis: bool) -> list[str]:
+    prefix = "Runtime training instances" if for_analysis else "Runtime instances"
+    if problem_name == "dfvs":
+        return [
+            f"{prefix} expose directed arcs as instance['arcs'], a list of 0-based [tail, head] pairs.",
+            "For DFVS, do not read instance['edges']; that field is absent. Use instance['arcs'] for all graph traversal, degree, and cycle logic.",
+            "Do not treat train_summary arc_prefix snippets as a runtime field; they are only examples.",
+        ]
+    if problem_name == "hitting_set":
+        return [
+            f"{prefix} expose hyperedges/sets as instance['sets'], a list of lists of 0-based vertex ids.",
+            "For Hitting Set, do not read instance['edges']; that field is absent. Use instance['sets'].",
+            "Do not treat train_summary set_prefix snippets as a runtime field; they are only examples.",
+        ]
+    if problem_name == "ocm":
+        return [
+            f"{prefix} expose bipartite OCM edges as instance['edges'], a list of 0-based [fixed, free] pairs.",
+            "OCM solutions must return a permutation of free vertices 0..num_free-1.",
+            "Do not treat train_summary edge_prefix snippets as a runtime field; they are only examples.",
+        ]
+    return [
+        f"{prefix} expose their public edge list as instance['edges']; do not treat train_summary edge_prefix snippets as a runtime field."
+    ]
+
+
 def _build_hypothesis_messages(
     *,
     manifest: dict[str, object],
@@ -661,7 +686,7 @@ def _build_analyze_messages(
         },
         "constraints": [
             "Return runnable Python code only in the schema field analyze_py.",
-            "Graph instances expose their public edge list as instance['edges']; do not treat train_summary sample edge_prefix snippets as a runtime field.",
+            *_runtime_instance_constraints(str(prompt_manifest["problem"]), for_analysis=True),
             "Use only the Python standard library plus already-available dasbench modules.",
             "The analysis output must stay compact and JSON-serializable.",
             "Do not assume access to optimum labels in the candidate-facing dataset.",
@@ -790,7 +815,7 @@ def _build_solution_messages(
         },
         "constraints": [
             "Return runnable Python code only in the schema field solution_py.",
-            "Runtime graph instances expose their edge list as instance['edges']; do not use edge_prefix except as an optional fallback.",
+            *_runtime_instance_constraints(str(prompt_manifest["problem"]), for_analysis=False),
             "The returned solution must be feasible for the problem; for MIS, never return adjacent vertices together.",
             "Use the analysis output instead of redoing expensive training-time work online.",
             "Keep per-instance runtime low.",
@@ -834,7 +859,7 @@ def _build_solver_only_analyze_messages(
         },
         "constraints": [
             "Return runnable Python code only in the schema field analyze_py.",
-            "Graph instances expose their public edge list as instance['edges']; do not treat train_summary sample edge_prefix snippets as a runtime field.",
+            *_runtime_instance_constraints(str(prompt_manifest["problem"]), for_analysis=True),
             "Use only the Python standard library plus already-available dasbench modules.",
             "The analysis output must stay compact and JSON-serializable.",
             "Handle train_instances=[] gracefully. If there are no training instances, use manifest metadata only and return a compact fallback analysis instead of failing.",
@@ -885,7 +910,7 @@ def _build_solver_only_solution_messages(
         },
         "constraints": [
             "Return runnable Python code only in the schema field solution_py.",
-            "Runtime graph instances expose their edge list as instance['edges']; do not use edge_prefix except as an optional fallback.",
+            *_runtime_instance_constraints(str(prompt_manifest["problem"]), for_analysis=False),
             "The returned solution must be feasible for the problem; for MIS, never return adjacent vertices together.",
             "Use the analysis output instead of redoing expensive training-time work online.",
             "Keep per-instance runtime low.",
@@ -1331,6 +1356,12 @@ def _build_solution_semantic_repair_messages(
     failed_attempt: int,
     max_repair_attempts: int,
 ) -> list[dict[str, str]]:
+    original_request = _original_prompt_payload(original_messages)
+    original_problem = ""
+    if isinstance(original_request, dict):
+        manifest = original_request.get("manifest")
+        if isinstance(manifest, dict):
+            original_problem = str(manifest.get("problem", ""))
     prompt_payload = {
         "stage": "solution_semantic_repair",
         "task": "Repair solution.py so it returns feasible, higher-quality solutions under the original problem interface.",
@@ -1342,7 +1373,7 @@ def _build_solution_semantic_repair_messages(
         "previous_notes": _prepare_text_for_prompt(previous_notes, max_chars=4_000),
         "current_analyze_py": _prepare_text_for_prompt(analyze_py),
         "current_analysis_output": _prepare_json_for_prompt(analysis_output),
-        "original_generation_request": _original_prompt_payload(original_messages),
+        "original_generation_request": original_request,
         "interfaces": {
             "solution.py": "define solve(instance, analysis=None, manifest=None) -> object",
         },
@@ -1350,7 +1381,7 @@ def _build_solution_semantic_repair_messages(
             "Return a complete replacement solution.py in the solution_py schema field.",
             "Do not include Markdown fences or explanatory text inside the code field.",
             "Fix the observed train-set failures directly.",
-            "Runtime graph instances expose their edge list as instance['edges']; do not use edge_prefix except as an optional fallback.",
+            *_runtime_instance_constraints(original_problem, for_analysis=False),
             "The returned solution must be feasible for every instance; for MIS, never return adjacent vertices together.",
             "Prefer a robust feasible fallback over an aggressive infeasible solution.",
             "Keep per-instance runtime low.",

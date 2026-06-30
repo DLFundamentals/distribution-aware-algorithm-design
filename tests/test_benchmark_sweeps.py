@@ -148,6 +148,35 @@ class BenchmarkSweepTests(unittest.TestCase):
         self.assertIn("city ids", prompt["solution_contract"]["required_shape"])
         self.assertIn("dict", " ".join(prompt["solution_contract"]["do_not_return"]))
 
+    def test_llm_pv_prompt_includes_pace_problem_contracts(self) -> None:
+        from benchmarks.llm_pv_benchmark import build_parser
+
+        args = build_parser().parse_args(["--dry-run", "--problem", "tsp"])
+        config = build_llm_pv_jobs(args, sweep_id="pace-prompt")[0].config
+        cases = {
+            "hitting_set": ["instance['sets']", "hits every set"],
+            "ocm": ["instance['edges']", "permutation"],
+            "dfvs": ["instance['arcs']", "instance['edges'] is absent"],
+        }
+        for problem, expected_fragments in cases.items():
+            with self.subTest(problem=problem):
+                messages = build_llm_pv_prompt_messages(
+                    manifest={
+                        "problem": problem,
+                        "family": f"{problem}_pace",
+                        "metric_definition": {"primary": "normalized_quality"},
+                        "instance_schema_version": f"{problem}.v1",
+                    },
+                    train_summary={"family": f"{problem}_pace"},
+                    train_public=[],
+                    attempt_index=1,
+                    config=config,
+                )
+                prompt = json.loads(messages[1]["content"])
+                contract_text = json.dumps(prompt["solution_contract"])
+                for fragment in expected_fragments:
+                    self.assertIn(fragment, contract_text)
+
     def test_llm_pv_plain_python_prompt_drops_json_wrapper_requirement(self) -> None:
         from benchmarks.llm_pv_benchmark import build_parser
 

@@ -340,6 +340,36 @@ def _solution_contract(problem_name: str, manifest: dict[str, object]) -> dict[s
             "required_shape": "Return a plain Python list of selected zero-based vertex ids forming a dominating set.",
             "do_not_return": ["a dict", "a boolean vector", "metadata or objective values"],
         }
+    if problem_name == "hitting_set":
+        return {
+            "return_type": "list[int]",
+            "required_shape": (
+                "Runtime instances provide instance['num_vertices'] and instance['sets'], where each set is a "
+                "list of zero-based vertex ids. Return a plain Python list of selected zero-based vertex ids "
+                "that hits every set."
+            ),
+            "do_not_return": ["a dict", "a boolean vector", "one-based vertex ids", "metadata or objective values"],
+        }
+    if problem_name == "ocm":
+        return {
+            "return_type": "list[int]",
+            "required_shape": (
+                "Runtime instances provide instance['num_fixed'], instance['num_free'], and instance['edges'] "
+                "as zero-based [fixed_vertex, free_vertex] pairs. Return a permutation list containing each "
+                "free-side vertex id 0..instance['num_free']-1 exactly once."
+            ),
+            "do_not_return": ["fixed-side vertex ids", "one-based vertex ids", "a dict", "metadata or crossing counts"],
+        }
+    if problem_name == "dfvs":
+        return {
+            "return_type": "list[int]",
+            "required_shape": (
+                "Runtime instances provide instance['num_vertices'] and directed arcs in instance['arcs'] as "
+                "zero-based [tail, head] pairs; instance['edges'] is absent. Return a plain Python list of "
+                "zero-based vertex ids to delete so the remaining directed graph is acyclic."
+            ),
+            "do_not_return": ["a dict", "a boolean vector", "one-based vertex ids", "metadata or objective values"],
+        }
     if problem_name == "mis":
         return {
             "return_type": "list[int]",
