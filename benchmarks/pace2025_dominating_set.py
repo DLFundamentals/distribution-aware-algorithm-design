@@ -5,6 +5,7 @@ import csv
 import json
 import math
 import os
+import shutil
 import tarfile
 import time
 import urllib.request
@@ -15,6 +16,7 @@ from typing import Iterable
 from dasbench.agents.candidate import build_solver, run_analysis
 from dasbench.cli import cmd_run_agent
 from dasbench.data import load_manifest, load_split
+from dasbench.eval.evaluator import SolverTimeoutError, _resolved_solver_timeout, _solver_timeout
 from dasbench.integrations import load_openai_dotenv
 from dasbench.problems import get_problem_definition
 from dasbench.problems.graph_utils import adjacency_sets, normalized_edges
@@ -453,6 +455,7 @@ def _write_pace_evaluation_artifacts(
     feasible_count = len(feasible_rows)
     total_solution_size = sum(int(row.get("solution_size") or 0) for row in feasible_rows)
     total_runtime_ms = sum(float(row.get("runtime_ms") or 0.0) for row in rows)
+    timeout_count = sum(1 for row in rows if "SolverTimeoutError" in str(row.get("error", "")))
     summary = {
         "schema_version": "pace2025_ds_evaluation.v1",
         "dataset_dir": str(dataset_dir),
@@ -461,6 +464,8 @@ def _write_pace_evaluation_artifacts(
         "num_instances": len(rows),
         "feasible_count": feasible_count,
         "invalid_count": len(rows) - feasible_count,
+        "timeout_count": timeout_count,
+        "solver_timeout_seconds": _resolved_solver_timeout(None),
         "total_solution_size": total_solution_size,
         "average_solution_size": total_solution_size / feasible_count if feasible_count else 0.0,
         "average_runtime_ms": total_runtime_ms / len(rows) if rows else 0.0,
@@ -506,6 +511,8 @@ def export_pace_evaluation(
     best_candidate = synthesis_summary["best_candidate"]
     candidate_dir = Path(best_candidate["candidate_dir"])
     solution_dir = output_dir / "solutions"
+    if solution_dir.exists():
+        shutil.rmtree(solution_dir)
     solution_path = candidate_dir / "solution.py"
     if not solution_path.exists():
         candidate_error = None
@@ -563,12 +570,23 @@ def export_pace_evaluation(
         start = time.perf_counter()
         error: str | None = None
         try:
-            raw_solution = solver(exposed)
+            with _solver_timeout(
+                None,
+                name=str(best_candidate["slug"]),
+                split="pace_export",
+                instance_id=instance.get("id"),
+            ):
+                raw_solution = solver(exposed)
+                solution = problem.canonicalize_solution(raw_solution, exposed)
+                feasible, validation_error = problem.validate_solution(solution, exposed)
             runtime_ms = (time.perf_counter() - start) * 1000.0
-            solution = problem.canonicalize_solution(raw_solution, exposed)
-            feasible, validation_error = problem.validate_solution(solution, exposed)
             if not feasible:
                 error = validation_error
+        except SolverTimeoutError as exc:
+            runtime_ms = (time.perf_counter() - start) * 1000.0
+            solution = []
+            feasible = False
+            error = f"{type(exc).__name__}: {exc}"
         except Exception as exc:
             runtime_ms = (time.perf_counter() - start) * 1000.0
             solution = []
