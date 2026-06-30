@@ -13,6 +13,10 @@ wheels/
 # Environment Variables
 .env
 .env.local-vllm
+.env.kimi-k26
+.env.deepseek-v4-pro
+.env.glm-52
+.env.gpt-oss
 
 # Generated experiment artifacts
 /artifacts/

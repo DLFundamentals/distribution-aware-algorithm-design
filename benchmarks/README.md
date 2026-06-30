@@ -20,6 +20,8 @@ them locally, or provide them through an anonymous external artifact archive for
 | LLM-PV Baseline | Propose-and-verify baseline: sample solver programs, select by validation, evaluate on test | `python -m benchmarks.llm_pv_benchmark --source-run-root "$MAIN_SWEEP_ROOT" --attempts 5 --model gpt-5 --reasoning-effort high --max-workers 1` | Reuses datasets from a completed main benchmark run |
 | Graph Relabel Invariance | Graph presentation perturbation ablation | `python -m benchmarks.graph_relabel_invariance_benchmark --source-run-root "$MAIN_SWEEP_ROOT" --max-workers 4` | Needs a completed main benchmark run |
 | PACE 2025 Dominating Set | External PACE diagnostic | `python -m benchmarks.pace2025_dominating_set --track heuristic --test-source private` | Downloads or reads PACE instances; needs LLM API for synthesis |
+| PACE HS/OCM/DFVS Imports | Additional external PACE benchmarks | `python -m benchmarks.pace_competitions --competition pace2025_hs --build-only` | Downloads or reads PACE instances; optional pinned solver builds |
+| Provider Model Sweep | Run main 21-target, LLM-PV, and PACE experiments across custom-chat providers | `python -m scripts.run_provider_model_sweep --dry-run` | Reuses provider env files such as `.env.kimi-k26` |
 
 `$MAIN_SWEEP_ROOT` should point to a completed main benchmark sweep root, for example
 `artifacts/second_scale_benchmark_v2/<sweep_id>`.
@@ -126,6 +128,62 @@ The solver checkouts live under `baselines/src/pace2025_*`. The longer external 
 solvers with hardcoded near-competition runtimes enough room to exit normally and write their final
 PACE-format solution.
 
+Additional PACE imports share one CLI:
+
+```bash
+python -m benchmarks.pace_competitions --competition pace2025_hs --build-only
+python -m benchmarks.pace_competitions --competition pace2024_ocm_exact --build-only
+python -m benchmarks.pace_competitions --competition pace2024_ocm_cutwidth --build-only
+python -m benchmarks.pace_competitions --competition pace2022_dfvs_heuristic --build-only
+```
+
+## Provider Model Sweep
+
+`scripts.run_provider_model_sweep` coordinates the long model comparison runs across
+provider-specific custom-chat env files. It runs sequentially by default, writes per-stage logs
+and status JSON under `artifacts/model_sweeps/<provider>/runner_*`, and skips completed stages
+unless `--force` is passed.
+
+Create env-file templates:
+
+```bash
+python -m scripts.run_provider_model_sweep --init-env-templates
+```
+
+Dry-run a single provider:
+
+```bash
+python -m scripts.run_provider_model_sweep --dry-run --provider kimi-k26
+```
+
+Launch the full sweep detached:
+
+```bash
+python -m scripts.run_provider_model_sweep --detach
+```
+
+The default providers are `kimi-k26`, `deepseek-v4-pro`, and `glm-52`, backed by
+`.env.kimi-k26`, `.env.deepseek-v4-pro`, and `.env.glm-52`.
+
+To install and run pinned external solvers without committing third-party source trees:
+
+```bash
+python -m benchmarks.pace_competitions \
+  --competition pace2024_ocm_heuristic \
+  --install-solvers \
+  --solvers cimat
+
+python -m benchmarks.pace_competitions \
+  --competition pace2024_ocm_heuristic \
+  --run-baselines \
+  --solvers cimat \
+  --build-only \
+  --test-count 5
+```
+
+Solver clones, shims, raw outputs, stderr logs, and baseline reports live under ignored
+`artifacts/external/pace_solvers/` and per-run `artifacts/pace_competitions/` directories.
+
 Local run-management utilities used during development, such as failed-run cleanup, candidate
 removal, tail finishers, diagnostic patchers, and missing-runtime rerunners, are intentionally omitted
 from the submission tree. Their provenance remains in git history.
@@ -141,4 +199,5 @@ python -m benchmarks.candidate_count_sweep --dry-run --problem tsp
 python -m benchmarks.iteration_count_sweep --dry-run --problem tsp
 python -m benchmarks.llm_pv_benchmark --dry-run --problem tsp
 python -m benchmarks.pace2025_dominating_set --help
+python -m benchmarks.pace_competitions --competition pace2024_ocm_exact --build-only --train-count 1 --validation-count 1 --test-count 1
 ```

@@ -5,10 +5,13 @@
 The current benchmark suite supports:
 
 - `coloring`
+- `dfvs`
+- `hitting_set`
 - `maxsat`
 - `mdkp`
 - `mis`
 - `mds`
+- `ocm`
 - `packing_lp`
 - `tsp`
 
@@ -337,10 +340,13 @@ All problems report:
 Problem-specific normalization:
 
 - `coloring`: optimum number of colors / returned number of colors
+- `dfvs`: optimum-or-proxy feedback vertex set size / returned feedback vertex set size
+- `hitting_set`: optimum-or-proxy hitting set size / returned hitting set size
 - `mdkp`: returned item value / optimum item value
 - `maxsat`: satisfied clauses / optimum satisfied clauses
 - `mis`: independent set size / optimum independent set size
 - `mds`: optimum dominating set size / returned dominating set size
+- `ocm`: optimum-or-reference crossing count / returned crossing count
 - `packing_lp`: returned objective / optimum objective
 - `tsp`: optimum tour length / returned tour length
 
