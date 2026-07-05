@@ -191,7 +191,10 @@ SOLVER_RECIPES: dict[str, SolverRecipe] = {
         competition="pace2022_dfvs_heuristic",
         repo_url="https://github.com/KennethLangedal/DFVS",
         commit="1c226b8bd3cb1412cde55edbe81a22a2aa7bd8ea",
-        build_commands=("cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -G Ninja", "cmake --build build --parallel"),
+        build_commands=(
+            "cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G Ninja",
+            "cmake --build build --parallel",
+        ),
         executable="build/dfvs_heuristic",
     ),
 }

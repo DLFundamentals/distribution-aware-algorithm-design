@@ -218,6 +218,7 @@ def chat_config_with_overrides(
             base_url=config.base_url,
             organization=config.organization,
             project=config.project,
+            timeout_seconds=config.timeout_seconds,
         )
     return CustomChatAPIConfig(
         api_key=config.api_key,
@@ -434,9 +435,10 @@ def create_chat_completion_raw(
         )
     else:
         request["reasoning_effort"] = config.reasoning_effort
-    if timeout is None:
+    resolved_timeout = config.timeout_seconds if timeout is None else timeout
+    if resolved_timeout is None:
         return client.chat.completions.with_raw_response.create(**request)
-    return client.chat.completions.with_raw_response.create(**request, timeout=timeout)
+    return client.chat.completions.with_raw_response.create(**request, timeout=resolved_timeout)
 
 
 def chat_completion_text(completion: object) -> str:

@@ -293,6 +293,18 @@ class ChatAPIRequestTests(unittest.TestCase):
             },
         )
 
+    def test_openai_timeout_config_is_passed_to_request(self) -> None:
+        fake_client = _FakeClient()
+        config = OpenAIAPIConfig(api_key="openai-key", timeout_seconds=14400.0)
+        with patch("dasbench.integrations.chat_api.build_chat_client", return_value=fake_client):
+            create_chat_completion_raw(
+                config,
+                messages=[{"role": "user", "content": "hello"}],
+                response_format={"type": "json_schema"},
+            )
+
+        self.assertEqual(fake_client.raw_response.kwargs["timeout"], 14400.0)
+
     def test_llm_pv_custom_provider_uses_chat_completions(self) -> None:
         from benchmarks.llm_pv_benchmark import LLMPVConfig, _call_llm_for_solution
 

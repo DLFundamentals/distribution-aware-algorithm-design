@@ -8,6 +8,7 @@ from openai import OpenAI
 
 DEFAULT_MODEL = "gpt-5.2"
 DEFAULT_REASONING_EFFORT = "xhigh"
+OPENAI_TIMEOUT_SECONDS_ENV_VAR = "OPENAI_TIMEOUT_SECONDS"
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,7 @@ class OpenAIAPIConfig:
     base_url: str | None = None
     organization: str | None = None
     project: str | None = None
+    timeout_seconds: float | None = None
 
     def public_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -30,6 +32,19 @@ def load_openai_dotenv() -> bool:
     return True
 
 
+def _optional_positive_float_env(name: str) -> float | None:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return None
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise RuntimeError(f"`{name}` must be a positive number.") from exc
+    if parsed <= 0:
+        raise RuntimeError(f"`{name}` must be a positive number.")
+    return parsed
+
+
 def load_openai_api_config(*, required: bool = True) -> OpenAIAPIConfig | None:
     load_openai_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
@@ -38,6 +53,7 @@ def load_openai_api_config(*, required: bool = True) -> OpenAIAPIConfig | None:
     base_url = os.getenv("OPENAI_BASE_URL")
     organization = os.getenv("OPENAI_ORG_ID") or os.getenv("OPENAI_ORGANIZATION")
     project = os.getenv("OPENAI_PROJECT_ID")
+    timeout_seconds = _optional_positive_float_env(OPENAI_TIMEOUT_SECONDS_ENV_VAR)
     if not api_key:
         if not required:
             return None
@@ -52,6 +68,7 @@ def load_openai_api_config(*, required: bool = True) -> OpenAIAPIConfig | None:
         base_url=base_url,
         organization=organization,
         project=project,
+        timeout_seconds=timeout_seconds,
     )
 
 
