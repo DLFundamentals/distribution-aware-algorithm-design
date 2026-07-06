@@ -10,10 +10,12 @@ import subprocess
 import sys
 import threading
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from dotenv import dotenv_values
 from dasbench.artifacts import default_agent_run_dir, default_dataset_dir, default_report_dir
 from dasbench.data import BenchmarkSpec, generate_dataset, load_manifest, load_spec
 from dasbench.families import available_family_names
@@ -92,6 +94,8 @@ class SweepJob:
     baseline_workers: int = 1
     shared_dataset_train_size: int | None = None
     shared_dataset_validation_size: int | None = None
+    source_dataset_dir: Path | None = None
+    env_file: Path | None = None
     skip_baselines: bool = False
     skip_report: bool = False
     condition_metadata: dict[str, object] = field(default_factory=dict)
@@ -138,6 +142,10 @@ class SweepJob:
     @property
     def uses_shared_dataset(self) -> bool:
         return self.shared_dataset_train_size is not None or self.shared_dataset_validation_size is not None
+
+    @property
+    def uses_reused_dataset(self) -> bool:
+        return self.source_dataset_dir is not None
 
     @property
     def shared_dataset_dir(self) -> Path:
@@ -212,6 +220,24 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-workers", type=int, default=4)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true", help="Rerun completed targets and regenerate datasets.")
+    parser.add_argument(
+        "--env-file",
+        help=(
+            "Dotenv file to apply to this sweep and every per-target subprocess. "
+            "Values in this file override the current environment and prevent overlapping `.env` values from winning."
+        ),
+    )
+    parser.add_argument(
+        "--source-run-root",
+        help=(
+            "Existing benchmark sweep root whose datasets should be reused, for example "
+            "artifacts/second_scale_benchmark_v2/20260427_230552."
+        ),
+    )
+    parser.add_argument(
+        "--source-condition-id",
+        help="Condition id under --source-run-root/targets to reuse. Defaults to each target condition id.",
+    )
     parser.add_argument("--generator", choices=["llm", "llm_no_hint", "template", "auto"], default="llm")
     parser.add_argument("--mode", choices=["single", "beam"], default="beam")
     parser.add_argument("--iterations", type=int, default=3)
@@ -232,6 +258,8 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--external-threads", type=int, default=1)
     parser.add_argument("--external-solver-config")
     parser.add_argument("--baseline-workers", type=int, default=1)
+    parser.add_argument("--skip-baselines", action="store_true")
+    parser.add_argument("--skip-report", action="store_true")
 
 
 def resolve_sweep_artifact_root(output_root: str | Path, sweep_kind: str, sweep_id: str) -> Path:
@@ -284,7 +312,7 @@ def benchmark_command(job: SweepJob) -> list[str]:
     ]
     if job.candidate_width is not None:
         command.extend(["--candidate-width", str(job.candidate_width)])
-    if job.force and not job.uses_shared_dataset:
+    if job.force and not job.uses_shared_dataset and not job.uses_reused_dataset:
         command.append("--force-regenerate")
     if job.include_train:
         command.append("--include-train")
@@ -358,6 +386,98 @@ def _link_or_copy_file(source: Path, destination: Path) -> None:
         shutil.copy2(source, destination)
 
 
+def _source_dataset_dir(source_run_root: Path, source_condition_id: str, problem: str, family: str) -> Path:
+    return source_run_root / "targets" / source_condition_id / problem / family / "dataset"
+
+
+def _target_reused_dataset_is_current(target_dir: Path, *, source_dir: Path) -> bool:
+    required_files = (
+        "manifest.json",
+        "benchmark_spec.json",
+        "reproducibility.json",
+        "train.jsonl",
+        "validation.jsonl",
+        "test.jsonl",
+    )
+    if not all((target_dir / name).exists() for name in required_files):
+        return False
+    try:
+        target_spec = json.loads((target_dir / "benchmark_spec.json").read_text(encoding="utf-8"))
+        source_spec = json.loads((source_dir / "benchmark_spec.json").read_text(encoding="utf-8"))
+        target_manifest = json.loads((target_dir / "manifest.json").read_text(encoding="utf-8"))
+        source_manifest = json.loads((source_dir / "manifest.json").read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return (
+        target_spec == source_spec
+        and target_manifest.get("problem") == source_manifest.get("problem")
+        and target_manifest.get("family") == source_manifest.get("family")
+        and target_manifest.get("split_sizes") == source_manifest.get("split_sizes")
+        and target_manifest.get("reused_dataset_source") == str(source_dir)
+    )
+
+
+def _validate_reused_source_dataset(job: SweepJob, source_dir: Path) -> dict[str, object]:
+    required_files = (
+        "manifest.json",
+        "benchmark_spec.json",
+        "reproducibility.json",
+        "train.jsonl",
+        "validation.jsonl",
+        "test.jsonl",
+    )
+    missing = [name for name in required_files if not (source_dir / name).exists()]
+    if missing:
+        raise FileNotFoundError(f"Source dataset {source_dir} is missing required files: {', '.join(missing)}")
+
+    manifest = json.loads((source_dir / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("problem") != job.problem or manifest.get("family") != job.family:
+        raise RuntimeError(
+            f"Source dataset {source_dir} is for {manifest.get('problem')}/{manifest.get('family')}, "
+            f"but job expects {job.problem}/{job.family}."
+        )
+    split_sizes = manifest.get("split_sizes", {})
+    expected_split_sizes = {
+        "train": job.train_size,
+        "validation": job.validation_size,
+        "test": job.test_size,
+    }
+    if split_sizes != expected_split_sizes:
+        raise RuntimeError(
+            f"Source dataset {source_dir} has split sizes {split_sizes}, "
+            f"but job expects {expected_split_sizes}."
+        )
+    return manifest
+
+
+def _materialize_reused_dataset(job: SweepJob, *, source_dir: Path) -> None:
+    if not source_dir.exists():
+        raise FileNotFoundError(f"Source dataset does not exist: {source_dir}")
+    if not job.force and _target_reused_dataset_is_current(job.dataset_dir, source_dir=source_dir):
+        return
+
+    manifest = _validate_reused_source_dataset(job, source_dir)
+    shutil.rmtree(job.dataset_dir, ignore_errors=True)
+    job.dataset_dir.mkdir(parents=True, exist_ok=True)
+    for filename in ("benchmark_spec.json", "reproducibility.json", "train.jsonl", "validation.jsonl", "test.jsonl"):
+        _link_or_copy_file(source_dir / filename, job.dataset_dir / filename)
+
+    reused_manifest = json.loads(json.dumps(manifest))
+    reused_manifest["artifact_paths"] = {
+        "dataset_dir": str(job.dataset_dir),
+        "splits": {
+            "train": str(job.dataset_dir / "train.jsonl"),
+            "validation": str(job.dataset_dir / "validation.jsonl"),
+            "test": str(job.dataset_dir / "test.jsonl"),
+        },
+        "manifest": str(job.dataset_dir / "manifest.json"),
+        "benchmark_spec": str(job.dataset_dir / "benchmark_spec.json"),
+        "reproducibility": str(job.dataset_dir / "reproducibility.json"),
+    }
+    reused_manifest["reused_dataset_source"] = str(source_dir)
+    write_json(job.dataset_dir / "manifest.json", reused_manifest)
+
+
 def _materialize_dataset_view(job: SweepJob, *, shared_dataset_dir: Path) -> None:
     target_dir = job.dataset_dir
     expected_spec = _spec_for_job(job, train_size=job.train_size, validation_size=job.validation_size)
@@ -427,6 +547,8 @@ def _materialize_dataset_view(job: SweepJob, *, shared_dataset_dir: Path) -> Non
 def _prepare_shared_dataset(job: SweepJob) -> None:
     if not job.uses_shared_dataset:
         return
+    if job.uses_reused_dataset:
+        raise RuntimeError("A sweep job cannot use both a source dataset and a generated shared dataset.")
     assert job.shared_dataset_train_size is not None
     resolved_shared_validation_size = (
         job.shared_dataset_validation_size if job.shared_dataset_validation_size is not None else job.validation_size
@@ -468,7 +590,61 @@ def _prepare_shared_dataset(job: SweepJob) -> None:
         _materialize_dataset_view(job, shared_dataset_dir=shared_dataset_dir)
 
 
-def run_job(job: SweepJob, *, output_dir: Path, dry_run: bool) -> dict[str, object]:
+def _prepare_reused_dataset(job: SweepJob) -> None:
+    if job.source_dataset_dir is None:
+        return
+    lock = _dataset_prep_lock(job.dataset_dir)
+    with lock:
+        _materialize_reused_dataset(job, source_dir=job.source_dataset_dir)
+
+
+@contextmanager
+def _temporary_environ(env: dict[str, str]):
+    previous = os.environ.copy()
+    os.environ.clear()
+    os.environ.update(env)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(previous)
+
+
+def _env_file_for_jobs(jobs: list[SweepJob]) -> Path | None:
+    env_files = {job.env_file for job in jobs if job.env_file is not None}
+    if len(env_files) > 1:
+        raise RuntimeError(f"Expected one env file per sweep, got: {sorted(str(path) for path in env_files)}")
+    return next(iter(env_files), None)
+
+
+def _env_with_file(env_file: Path) -> dict[str, str]:
+    if not env_file.exists():
+        raise FileNotFoundError(f"Env file does not exist: {env_file}")
+    parsed = dotenv_values(env_file)
+    env = os.environ.copy()
+    for key, value in parsed.items():
+        if value is not None:
+            env[str(key)] = str(value)
+    return env
+
+
+def _prepare_sweep_env(jobs: list[SweepJob], *, require_chat_config: bool) -> dict[str, str]:
+    env_file = _env_file_for_jobs(jobs)
+    if env_file is None:
+        load_openai_dotenv()
+        if require_chat_config:
+            load_chat_api_config(required=True)
+        return os.environ.copy()
+
+    env = _env_with_file(env_file)
+    with _temporary_environ(env):
+        load_openai_dotenv()
+        if require_chat_config:
+            load_chat_api_config(required=True)
+        return os.environ.copy()
+
+
+def run_job(job: SweepJob, *, output_dir: Path, dry_run: bool, env: dict[str, str] | None = None) -> dict[str, object]:
     command = benchmark_command(job)
     log_path = log_path_for_job(output_dir, job)
     if job.completion_path.exists() and not job.force:
@@ -476,6 +652,7 @@ def run_job(job: SweepJob, *, output_dir: Path, dry_run: bool) -> dict[str, obje
     if dry_run:
         return _job_result(job, command, log_path, returncode=0, status="dry_run")
 
+    _prepare_reused_dataset(job)
     _prepare_shared_dataset(job)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as handle:
@@ -488,7 +665,7 @@ def run_job(job: SweepJob, *, output_dir: Path, dry_run: bool) -> dict[str, obje
             stderr=subprocess.STDOUT,
             text=True,
             check=False,
-            env=os.environ.copy(),
+            env=env or os.environ.copy(),
         )
     status = "completed" if completed.returncode == 0 and job.completion_path.exists() else "failed"
     return _job_result(job, command, log_path, returncode=completed.returncode, status=status)
@@ -511,6 +688,8 @@ def _job_result(
         "agent_run_dir": str(job.agent_run_dir),
         "report_dir": str(job.report_dir),
         "report_json_path": str(job.report_json_path),
+        "source_dataset_dir": str(job.source_dataset_dir) if job.source_dataset_dir is not None else None,
+        "env_file": str(job.env_file) if job.env_file is not None else None,
         "log_path": str(log_path),
         "command": command,
         "returncode": returncode,
@@ -727,9 +906,10 @@ def run_sweep(
     max_workers: int,
     dry_run: bool,
 ) -> dict[str, object]:
-    load_openai_dotenv()
-    if any(job.generator in {"llm", "llm_no_hint"} for job in jobs) and not dry_run:
-        load_chat_api_config(required=True)
+    subprocess_env = _prepare_sweep_env(
+        jobs,
+        require_chat_config=any(job.generator in {"llm", "llm_no_hint"} for job in jobs) and not dry_run,
+    )
 
     output_dir = resolve_sweep_artifact_root(output_root, sweep_kind, sweep_id)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -766,7 +946,7 @@ def run_sweep(
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(run_job, job, output_dir=output_dir, dry_run=dry_run): job
+            executor.submit(run_job, job, output_dir=output_dir, dry_run=dry_run, env=subprocess_env): job
             for job in pending_jobs
         }
         with tqdm(
@@ -832,6 +1012,12 @@ def jobs_from_conditions(
                 merged_instance_params = dict(instance_params_by_problem.get(problem, {}))
                 merged_instance_params.update(instance_params)
                 instance_params = merged_instance_params
+            source_dataset_dir = None
+            source_run_root = getattr(args, "source_run_root", None)
+            if source_run_root:
+                source_condition_id = getattr(args, "source_condition_id", None) or condition_id
+                source_dataset_dir = _source_dataset_dir(Path(str(source_run_root)), str(source_condition_id), problem, family)
+            env_file = getattr(args, "env_file", None)
             jobs.append(
                 SweepJob(
                     artifact_root=artifact_root,
@@ -879,8 +1065,10 @@ def jobs_from_conditions(
                         if condition.get("shared_dataset_validation_size") is not None
                         else None
                     ),
-                    skip_baselines=bool(condition.get("skip_baselines", False)),
-                    skip_report=bool(condition.get("skip_report", False)),
+                    source_dataset_dir=source_dataset_dir,
+                    env_file=Path(str(env_file)) if env_file else None,
+                    skip_baselines=bool(getattr(args, "skip_baselines", False) or condition.get("skip_baselines", False)),
+                    skip_report=bool(getattr(args, "skip_report", False) or condition.get("skip_report", False)),
                     condition_metadata={
                         key: value
                         for key, value in condition.items()
