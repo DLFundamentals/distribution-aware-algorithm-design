@@ -123,6 +123,35 @@ set it to `0` to disable the guardrail. `DASBENCH_SOLVER_MEMORY_LIMIT_MB` caps
 solver address-space usage in MiB and records memory-limit hits as failed
 candidates; set it to `0` to disable the guardrail.
 
+### Constrained-Action Agent Generator
+
+`--generator agent` wraps the same chat provider path (OpenAI **or** local vLLM)
+in a minimal constrained-action loop instead of the staged structured-output
+pipeline. Each candidate slot lets the model drive its own generation with real
+execution feedback: it emits one action per turn (`write_file` for
+`hypothesis.json`/`analyze.py`/`solution.py`, `run_check` for a train-only
+feasibility/quality probe, `peek_instance`, or `finish`) and self-corrects until
+`run_check` passes. It produces the identical candidate contract and is scored
+with the identical `evaluate_solver` calls as `--generator llm`, so the two are
+directly comparable; it drops strict JSON-schema structured outputs, which tend
+to degrade weaker local models. There is no arbitrary shell — the harness runs a
+fixed action set, and the model only ever sees sanitized public train data plus
+the same aggregate train feedback the `llm` generator exposes during repair.
+
+```bash
+python main.py run-agent \
+  --dataset-dir artifacts/datasets/mis/motif_bridge_mixture_v1/smoke_mis \
+  --generator agent \
+  --mode beam \
+  --iterations 3 \
+  --beam-width 3
+```
+
+`DASBENCH_AGENT_MAX_STEPS` caps actions per candidate (default `16`),
+`DASBENCH_AGENT_CHECK_SAMPLE` sets how many train instances each `run_check`
+probes (default `8`), and `DASBENCH_AGENT_FORMAT_RETRIES` bounds retries on
+unparseable actions before the candidate is abandoned (default `3`).
+
 ## Quick Start
 
 Generate a MAXSAT dataset with default artifact placement:
