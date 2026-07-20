@@ -163,9 +163,10 @@ def _agent_protocol_prompt() -> str:
         "    include a short 'diversity_key' string field naming the structural idea.\n"
         "    analyze.py must define analyze(train_instances, manifest=None) -> dict.\n"
         "    solution.py must define solve(instance, analysis=None, manifest=None) -> object.\n"
-        "- ACTION: run_check   Runs analyze.py then solution.py on a small TRAIN sample and\n"
-        "    reports feasibility, normalized quality, runtime, and any tracebacks. Use this to\n"
-        "    debug and improve your code before finishing.\n"
+        "- ACTION: run_check   Runs analyze.py then solution.py on a representative TRAIN sample\n"
+        "    spanning the full training set (small to large instances) and reports feasibility,\n"
+        "    normalized quality, runtime, and any tracebacks. Use this to debug and improve your\n"
+        "    code before finishing; make sure it holds up on the largest instances too.\n"
         "- ACTION: peek_instance <index>   Prints one sanitized training instance.\n"
         "- ACTION: finish   Declare the candidate complete. Only succeeds once all three files\n"
         "    exist and run_check builds a solver without error.\n\n"
@@ -248,6 +249,28 @@ def _handle_peek_instance(train_public: list[dict[str, object]], action: ParsedA
     return f"train_instance[{index}]:\n" + _compact_json(train_public[index], limit=PEEK_CHAR_LIMIT)
 
 
+def _spread_indices(total: int, count: int) -> list[int]:
+    """Evenly spaced instance indices across ``[0, total)``.
+
+    Used so ``run_check`` probes a representative slice of the whole train set
+    (including the largest/hardest instances) rather than just the first N, which
+    would let generalization failures that only appear on big instances slip past
+    the agent's self-correction loop.
+    """
+    if count >= total:
+        return list(range(total))
+    if count <= 1:
+        return [0]
+    raw = (round(i * (total - 1) / (count - 1)) for i in range(count))
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for index in raw:
+        if index not in seen:
+            seen.add(index)
+            ordered.append(index)
+    return ordered
+
+
 def _run_check(
     *,
     candidate_dir: Path,
@@ -257,8 +280,10 @@ def _run_check(
     train_full: list[dict[str, object]],
     sample_size: int,
 ) -> tuple[bool, str]:
-    """Run analyze+solve on a small train sample. Returns (solver_built, feedback_text).
+    """Run analyze+solve on a spread train sample. Returns (solver_built, feedback_text).
 
+    The sample is evenly spaced across the full train set (not the first N) so the
+    probe covers the instance-size range and exposes generalization failures in-loop.
     Only aggregate train feedback is surfaced (feasibility/quality/runtime plus the
     evaluator's per-instance messages) -- the same information the ``llm`` generator
     already exposes to the model during semantic repair. No stored optima leak.
@@ -267,8 +292,9 @@ def _run_check(
     if missing:
         return False, f"run_check skipped: missing files {missing}. Write them first."
 
-    sample_full = train_full[:sample_size]
-    sample_public = train_public[:sample_size]
+    indices = _spread_indices(len(train_full), sample_size)
+    sample_full = [train_full[i] for i in indices]
+    sample_public = [train_public[i] for i in indices]
     try:
         analysis = run_analysis(candidate_dir, sample_public, manifest=manifest)
     except Exception as exc:  # noqa: BLE001 - surfaced verbatim to the model
@@ -286,6 +312,8 @@ def _run_check(
 
     report = {
         "sampled_train_instances": len(sample_full),
+        "sample_spans_full_train_set": len(sample_full) == len(train_full) or len(indices) > 1,
+        "total_train_instances": len(train_full),
         "feasibility_rate": summary.get("feasibility_rate"),
         "average_normalized_quality": summary.get("average_normalized_quality"),
         "optimality_rate": summary.get("optimality_rate"),
