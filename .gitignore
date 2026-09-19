@@ -18,6 +18,9 @@ wheels/
 /artifacts/
 results/
 
+# Local working docs (paper drafts, reviews, planning notes)
+docs/
+
 # Local exact baseline solver builds/binaries
 baselines/*
 !baselines/__init__.py
