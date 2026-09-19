@@ -58,6 +58,12 @@ from ml_baselines.runcsp_maxsat import RUN_CSP_MAXSAT_BASELINE_NAME
 from ml_baselines.runcsp_maxsat import RunCSPMaxSatConfig, RunCSPMaxSatNet
 from ml_baselines.runcsp_maxsat import fit as fit_runcsp_maxsat
 from ml_baselines.runcsp_maxsat import solve as solve_runcsp_maxsat
+from ml_baselines.anycsp import ANYCSP_COLORING_BASELINE_NAME, ANYCSP_MAXSAT_BASELINE_NAME
+from ml_baselines.anycsp import fit as fit_anycsp
+from ml_baselines.anycsp import solve as solve_anycsp
+from ml_baselines.gflownet import GFLOWNET_MDS_BASELINE_NAME, GFLOWNET_MIS_BASELINE_NAME
+from ml_baselines.gflownet import fit as fit_gflownet
+from ml_baselines.gflownet import solve as solve_gflownet
 from ml_baselines.seeding import seed_everything
 from ml_baselines.torch_utils import require_torch, resolve_device
 from ml_baselines.tsp_neural_constructor import TSP_BASELINE_NAME
@@ -197,6 +203,58 @@ BASELINE_SPECS: dict[str, BaselineSpec] = {
             metrics_path=metrics_path,
         ),
         solve=lambda problem, instance, state, config: solve_runcsp_maxsat(instance, state, config),
+    ),
+    ANYCSP_COLORING_BASELINE_NAME: BaselineSpec(
+        name=ANYCSP_COLORING_BASELINE_NAME,
+        problem="coloring",
+        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_anycsp(
+            problem,
+            train,
+            val,
+            config,
+            checkpoint_path=checkpoint_path,
+            metrics_path=metrics_path,
+        ),
+        solve=lambda problem, instance, state, config: solve_anycsp(problem, instance, state, config),
+    ),
+    ANYCSP_MAXSAT_BASELINE_NAME: BaselineSpec(
+        name=ANYCSP_MAXSAT_BASELINE_NAME,
+        problem="maxsat",
+        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_anycsp(
+            problem,
+            train,
+            val,
+            config,
+            checkpoint_path=checkpoint_path,
+            metrics_path=metrics_path,
+        ),
+        solve=lambda problem, instance, state, config: solve_anycsp(problem, instance, state, config),
+    ),
+    GFLOWNET_MIS_BASELINE_NAME: BaselineSpec(
+        name=GFLOWNET_MIS_BASELINE_NAME,
+        problem="mis",
+        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_gflownet(
+            problem,
+            train,
+            val,
+            config,
+            checkpoint_path=checkpoint_path,
+            metrics_path=metrics_path,
+        ),
+        solve=lambda problem, instance, state, config: solve_gflownet(problem, instance, state, config),
+    ),
+    GFLOWNET_MDS_BASELINE_NAME: BaselineSpec(
+        name=GFLOWNET_MDS_BASELINE_NAME,
+        problem="mds",
+        fit=lambda problem, train, val, config, checkpoint_path, metrics_path: fit_gflownet(
+            problem,
+            train,
+            val,
+            config,
+            checkpoint_path=checkpoint_path,
+            metrics_path=metrics_path,
+        ),
+        solve=lambda problem, instance, state, config: solve_gflownet(problem, instance, state, config),
     ),
     MDKP_BASELINE_NAME: BaselineSpec(
         name=MDKP_BASELINE_NAME,
