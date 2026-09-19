@@ -389,6 +389,32 @@ def build_pace_dataset(
         "test": test_paths,
     }
 
+    # Reuse an already-built dataset dir verbatim when its spec matches the requested splits:
+    # re-annotating PACE's huge private graphs (running the greedy reference on up to 4.2M-vertex
+    # instances) costs ~1 h, so skip it when the exact same instances are already annotated here.
+    existing_spec = dataset_dir / "benchmark_spec.json"
+    if existing_spec.is_file() and (dataset_dir / "manifest.json").is_file() and all(
+        (dataset_dir / f"{split}.jsonl").is_file() for split in split_paths
+    ):
+        try:
+            spec = json.loads(existing_spec.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            spec = {}
+        spec_matches = (
+            spec.get("track") == track
+            and spec.get("test_source") == test_source
+            and spec.get("train_paths") == train_paths
+            and spec.get("validation_paths") == validation_paths
+            and spec.get("test_paths") == test_paths
+        )
+        sizes_ok = all(
+            sum(1 for _ in (dataset_dir / f"{split}.jsonl").open(encoding="utf-8")) == len(paths)
+            for split, paths in split_paths.items()
+        )
+        if spec_matches and sizes_ok:
+            print(f"Reusing existing PACE dataset at {dataset_dir} (spec matches; skipping re-annotation).")
+            return json.loads((dataset_dir / "manifest.json").read_text(encoding="utf-8"))
+
     dataset_dir.mkdir(parents=True, exist_ok=True)
     problem = get_problem_definition("mds")
     split_sizes = {split: len(paths) for split, paths in split_paths.items()}
@@ -652,7 +678,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated MDS baselines used for reference columns, or `best-greedy`.",
     )
     parser.add_argument("--build-only", action="store_true")
-    parser.add_argument("--generator", choices=["auto", "template", "llm"], default="auto")
+    parser.add_argument("--generator", choices=["auto", "template", "llm", "agent"], default="auto")
     parser.add_argument("--mode", choices=["single", "beam"], default="beam")
     parser.add_argument("--iterations", type=int, default=2)
     parser.add_argument("--beam-width", type=int, default=3)
