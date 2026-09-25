@@ -116,8 +116,14 @@ def _load_cached_report_baselines(
     native_exact_config: NativeExactConfig,
     external_config: ExternalExactConfig,
 ) -> tuple[dict[str, dict[str, object]], dict[str, object]] | None:
-    if repeats != 1:
-        return None
+    # `repeats` deliberately does not gate the cache. Repeating a report is for
+    # measuring the *synthesized solver* several times; the baselines were
+    # already evaluated once during the run and are reported as single
+    # measurements either way. Re-running them per repeat would multiply a
+    # ~417 CPU-hour baseline sweep by `repeats` to reproduce numbers that are
+    # already on disk. Cached entries carry `repeats: 1` through
+    # `_single_trial_to_repeated`, so the report states honestly that only the
+    # agent's own row was repeated.
     run_manifest = _read_json_if_exists(agent_run_dir / "run_manifest.json")
     if run_manifest is None:
         return None
@@ -343,6 +349,7 @@ def generate_benchmark_report(
     best_candidate = synthesis_summary["best_candidate"]
     candidate_dir = Path(best_candidate["candidate_dir"])
     train_instances = load_split(dataset_dir, "train", public=True)
+    validation_instances_public = load_split(dataset_dir, "validation", public=True)
     candidate_analysis_start = time.perf_counter()
     analysis = run_analysis(
         candidate_dir,
@@ -422,6 +429,8 @@ def generate_benchmark_report(
                     native_exact_config=resolved_native_exact_config,
                     external_config=resolved_external_config,
                     artifact_dir=output_dir,
+                    train_instances=train_instances,
+                    validation_instances=validation_instances_public,
                 )
             for baseline_name, baseline_solver in baselines.items():
                 baseline_start = time.perf_counter()

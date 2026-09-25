@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import inspect
 import json
 import os
@@ -24,11 +23,10 @@ class AnalysisTimeoutError(TimeoutError):
 
 def _load_module(path: Path, *, prefix: str) -> ModuleType:
     module_name = f"{prefix}_{uuid.uuid4().hex}"
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not import module from {path}.")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    source = path.read_text(encoding="utf-8")
+    module = ModuleType(module_name)
+    module.__file__ = str(path)
+    exec(compile(source, str(path), "exec"), module.__dict__)
     return module
 
 

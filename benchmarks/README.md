@@ -17,11 +17,54 @@ them locally, or provide them through an anonymous external artifact archive for
 | Candidate Count | Candidate-width ablation | `python -m benchmarks.candidate_count_sweep --max-workers 4` | Starts from scratch |
 | Iteration Count | Iterative synthesis runtime figure | `python -m benchmarks.iteration_count_sweep --max-workers 4` | Starts from scratch |
 | No-Hint Recovery | Hidden-rule framing ablation | `python -m benchmarks.no_hint_recovery_benchmark --source-run-root "$MAIN_SWEEP_ROOT" --max-workers 4` | Needs a completed main benchmark run |
+| LLM-PV Baseline | Propose-and-verify baseline: sample solver programs, select by validation, evaluate on test | `python -m benchmarks.llm_pv_benchmark --source-run-root "$MAIN_SWEEP_ROOT" --attempts 5 --model gpt-5 --reasoning-effort high --max-workers 1` | Reuses datasets from a completed main benchmark run |
 | Graph Relabel Invariance | Graph presentation perturbation ablation | `python -m benchmarks.graph_relabel_invariance_benchmark --source-run-root "$MAIN_SWEEP_ROOT" --max-workers 4` | Needs a completed main benchmark run |
 | PACE 2025 Dominating Set | External PACE diagnostic | `python -m benchmarks.pace2025_dominating_set --track heuristic --test-source private` | Downloads or reads PACE instances; needs LLM API for synthesis |
+| PACE HS/OCM/DFVS Imports | Additional external PACE benchmarks | `python -m benchmarks.pace_competitions --competition pace2025_hs --build-only` | Downloads or reads PACE instances; optional pinned solver builds |
+| Provider Model Sweep | Run main 21-target, LLM-PV, and PACE experiments across custom-chat providers | `python -m scripts.run_provider_model_sweep --dry-run` | Reuses provider env files such as `.env.kimi-k26` |
 
 `$MAIN_SWEEP_ROOT` should point to a completed main benchmark sweep root, for example
 `artifacts/second_scale_benchmark_v2/<sweep_id>`.
+
+## LLM-PV Baseline
+
+`benchmarks.llm_pv_benchmark` adapts LLM-PV to DasBench as a solver-only propose-and-verify
+baseline. For each target it stages `train.jsonl`, `validation.jsonl`, and `test.jsonl` from
+the source sweep into `artifacts/llm_pv_benchmark/<sweep_id>/targets/llm_pv/...`, prompts the
+LLM for `solution.py` candidate programs, evaluates every attempt on train and validation,
+selects the best attempt by validation quality/optimality/runtime, and evaluates only that
+selected solver on test.
+
+Defaults match the reference LLM-PV search shape closely: `--attempts 5` and early stop at
+validation quality `1.0`. `--model` defaults to the active provider's model environment
+variable when set and otherwise `gpt-5`; `--reasoning-effort` defaults to the active provider's
+reasoning-effort environment variable when set and otherwise `high` for OpenAI. Output is
+uncapped by default; pass `--max-output-tokens` only when you want to cap the combined reasoning
+and visible output budget. LLM API requests use a large per-attempt timeout by default
+(`--api-timeout-seconds 14400`) so high-reasoning calls can finish. Code
+interpreter is off by default and can be enabled with `--enable-code-interpreter`. Prompts include
+problem-specific return-shape contracts, but evaluation still uses the normal DasBench solver
+interfaces. The benchmark runs one representative family per problem unless `--all-families` is passed.
+Calls through the alternate chat provider use `CUSTOM_CHAT_TIMEOUT_SECONDS=14400` by default when
+the caller does not pass a timeout, and retry HTTP 524 responses up to three times.
+
+Example:
+
+```bash
+python -m benchmarks.llm_pv_benchmark \
+  --source-run-root artifacts/second_scale_benchmark_v2/20260427_230552 \
+  --attempts 5 \
+  --model gpt-5 \
+  --reasoning-effort high \
+  --max-workers 1
+```
+
+Useful lower-cost checks:
+
+```bash
+python -m benchmarks.llm_pv_benchmark --dry-run --problem tsp
+python -m benchmarks.llm_pv_benchmark --problem maxsat --family latent_backdoor_mixture_v1 --attempts 1 --max-workers 1
+```
 
 ## Defaults
 
@@ -50,8 +93,96 @@ PACE helper scripts are kept because they support the external Dominating Set di
 
 ```bash
 python -m scripts.pace2025_run_heuristic_baselines --count 5
+python -m scripts.pace2025_run_llm_pv_baseline --attempts 5
 python -m scripts.pace2025_collect_heuristic_report
 ```
+
+To compare PACE 2025 Dominating Set instances against the in-repo MDS heuristics:
+
+```bash
+python -m scripts.pace2025_run_heuristic_baselines \
+  --dasbench-mds-baselines \
+  --source private \
+  --track heuristic \
+  --count 100 \
+  --dasbench-timeout-seconds 300 \
+  --max-workers 5 \
+  --output-dir artifacts/pace2025_dominating_set/baseline_comparisons/dasbench_mds_heuristics
+```
+
+To compare against locally installed PACE heuristic solvers using the wrappers in `baselines/bin/`:
+
+```bash
+python -m scripts.pace2025_run_heuristic_baselines \
+  --solvers fontanf,root,swats,shadoks,aeg,greeduce \
+  --source private \
+  --track heuristic \
+  --count 100 \
+  --timeout-seconds 360 \
+  --grace-seconds 30 \
+  --max-workers 6 \
+  --output-dir artifacts/pace2025_dominating_set/baseline_comparisons/pace_top_heuristics
+```
+
+The solver checkouts live under `baselines/src/pace2025_*`. The longer external timeout gives
+solvers with hardcoded near-competition runtimes enough room to exit normally and write their final
+PACE-format solution.
+
+Additional PACE imports share one CLI:
+
+```bash
+python -m benchmarks.pace_competitions --competition pace2025_hs --build-only
+python -m benchmarks.pace_competitions --competition pace2024_ocm_exact --build-only
+python -m benchmarks.pace_competitions --competition pace2024_ocm_cutwidth --build-only
+python -m benchmarks.pace_competitions --competition pace2022_dfvs_heuristic --build-only
+```
+
+## Provider Model Sweep
+
+`scripts.run_provider_model_sweep` coordinates the long model comparison runs across
+provider-specific custom-chat env files. It runs sequentially by default, writes per-stage logs
+and status JSON under `artifacts/model_sweeps/<provider>/runner_*`, and skips completed stages
+unless `--force` is passed.
+
+Create env-file templates:
+
+```bash
+python -m scripts.run_provider_model_sweep --init-env-templates
+```
+
+Dry-run a single provider:
+
+```bash
+python -m scripts.run_provider_model_sweep --dry-run --provider kimi-k26
+```
+
+Launch the full sweep detached:
+
+```bash
+python -m scripts.run_provider_model_sweep --detach
+```
+
+The default providers are `kimi-k26`, `deepseek-v4-pro`, and `glm-52`, backed by
+`.env.kimi-k26`, `.env.deepseek-v4-pro`, and `.env.glm-52`.
+
+To install and run pinned external solvers without committing third-party source trees:
+
+```bash
+python -m benchmarks.pace_competitions \
+  --competition pace2024_ocm_heuristic \
+  --install-solvers \
+  --solvers cimat
+
+python -m benchmarks.pace_competitions \
+  --competition pace2024_ocm_heuristic \
+  --run-baselines \
+  --solvers cimat \
+  --build-only \
+  --test-count 5
+```
+
+Solver clones, shims, raw outputs, stderr logs, and baseline reports live under ignored
+`artifacts/external/pace_solvers/` and per-run `artifacts/pace_competitions/` directories.
 
 Local run-management utilities used during development, such as failed-run cleanup, candidate
 removal, tail finishers, diagnostic patchers, and missing-runtime rerunners, are intentionally omitted
@@ -66,5 +197,7 @@ python -m benchmarks.sample_size_sweep --validation-size 32 --dry-run --problem 
 python -m benchmarks.problem_size_sweep --dry-run --problem tsp
 python -m benchmarks.candidate_count_sweep --dry-run --problem tsp
 python -m benchmarks.iteration_count_sweep --dry-run --problem tsp
+python -m benchmarks.llm_pv_benchmark --dry-run --problem tsp
 python -m benchmarks.pace2025_dominating_set --help
+python -m benchmarks.pace_competitions --competition pace2024_ocm_exact --build-only --train-count 1 --validation-count 1 --test-count 1
 ```

@@ -249,6 +249,49 @@ def _solve_mds(instance: dict[str, object], config: GurobiBaselineConfig) -> Sol
         return SolveOutcome(solution=solution, metadata=_metadata(model, instance_id=str(instance["id"])))
 
 
+def _hitting_set_warm_start(instance: dict[str, object]) -> list[int]:
+    """Reuse the problem's own greedy so the incumbent matches the catalog baseline."""
+    from dasbench.problems.hitting_set import _greedy_solution
+
+    return _greedy_solution(instance)
+
+
+def _solve_hitting_set(instance: dict[str, object], config: GurobiBaselineConfig) -> SolveOutcome:
+    """Minimum hitting set: choose fewest vertices meeting every hyperedge.
+
+    Only vertices that actually appear in some set can help, and PACE hypergraphs
+    declare far more vertices than they use (millions declared, a fraction
+    incident). Variables are therefore created per *incident* vertex rather than
+    over the declared range, which keeps the model to the size of the instance
+    that matters.
+    """
+    sets = [
+        {int(vertex) for vertex in hyperedge}
+        for hyperedge in instance["sets"]
+        if hyperedge
+    ]
+    incident = sorted({vertex for hyperedge in sets for vertex in hyperedge})
+    if not sets:
+        return SolveOutcome(solution=[], metadata={"instance_id": str(instance["id"])})
+
+    warm_start = set(_hitting_set_warm_start(instance))
+    with _model_context(config, name="gurobi_hitting_set") as model:
+        chosen = model.addVars(incident, vtype=GRB.BINARY, name="x")
+        for index, hyperedge in enumerate(sets):
+            model.addConstr(
+                gp.quicksum(chosen[vertex] for vertex in hyperedge) >= 1,
+                name=f"hit_{index}",
+            )
+        model.setObjective(chosen.sum(), GRB.MINIMIZE)
+        for vertex in incident:
+            chosen[vertex].Start = 1.0 if vertex in warm_start else 0.0
+        model.optimize()
+        if int(model.SolCount) <= 0:
+            _raise_without_incumbent(model, instance_id=str(instance["id"]))
+        solution = [vertex for vertex in incident if float(chosen[vertex].X) > 0.5]
+        return SolveOutcome(solution=solution, metadata=_metadata(model, instance_id=str(instance["id"])))
+
+
 def _solve_coloring(instance: dict[str, object], config: GurobiBaselineConfig) -> SolveOutcome:
     num_vertices = int(instance["num_vertices"])
     edges = [(int(left), int(right)) for left, right in instance["edges"]]
@@ -456,6 +499,7 @@ def build_gurobi_solver(problem_name: str, config: GurobiBaselineConfig):
         "maxsat": lambda instance: _solve_maxsat(instance, config),
         "mis": lambda instance: _solve_mis(instance, config),
         "mds": lambda instance: _solve_mds(instance, config),
+        "hitting_set": lambda instance: _solve_hitting_set(instance, config),
         "coloring": lambda instance: _solve_coloring(instance, config),
         "tsp": lambda instance: _solve_tsp(instance, config),
         "packing_lp": lambda instance: _solve_packing_lp(instance, config),

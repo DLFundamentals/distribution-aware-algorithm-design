@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import resource
+import signal
 import statistics
+import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +17,27 @@ from dasbench.problems.base import ScoreResult, SolveOutcome
 from dasbench.utils import public_instance, write_jsonl
 
 Solver = Callable[[dict[str, object]], Any]
+
+DEFAULT_SOLVER_TIMEOUT_SECONDS = 360.0
+SOLVER_TIMEOUT_ENV_VAR = "DASBENCH_SOLVER_TIMEOUT_SECONDS"
+DEFAULT_SOLVER_MEMORY_LIMIT_MB = 65_536.0
+SOLVER_MEMORY_LIMIT_ENV_VAR = "DASBENCH_SOLVER_MEMORY_LIMIT_MB"
+
+
+class SolverTimeoutError(TimeoutError):
+    pass
+
+
+def _evaluation_failure_case(error: str) -> dict[str, object]:
+    return {
+        "instance_id": "__evaluation__",
+        "normalized_quality": 0.0,
+        "objective_value": 0.0,
+        "runtime_ms": 1_000_000.0,
+        "is_optimal": False,
+        "error": error,
+        "failure_reason": error,
+    }
 
 
 def failed_summary(
@@ -29,9 +55,107 @@ def failed_summary(
         "optimality_rate": 0.0,
         "feasibility_rate": 0.0,
         "average_runtime_ms": 1_000_000.0,
-        "failure_cases": [],
+        "failure_cases": [_evaluation_failure_case(error)],
         "error": error,
     }
+
+
+def _resolved_solver_timeout(timeout_seconds: float | None) -> float | None:
+    if timeout_seconds is None:
+        raw_value = os.environ.get(SOLVER_TIMEOUT_ENV_VAR)
+        if raw_value is None or not raw_value.strip():
+            timeout_seconds = DEFAULT_SOLVER_TIMEOUT_SECONDS
+        else:
+            try:
+                timeout_seconds = float(raw_value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{SOLVER_TIMEOUT_ENV_VAR} must be a number of seconds, got {raw_value!r}."
+                ) from exc
+    if timeout_seconds <= 0:
+        return None
+    return float(timeout_seconds)
+
+
+def _resolved_solver_memory_limit_mb(memory_limit_mb: float | None) -> float | None:
+    if memory_limit_mb is None:
+        raw_value = os.environ.get(SOLVER_MEMORY_LIMIT_ENV_VAR)
+        if raw_value is None or not raw_value.strip():
+            memory_limit_mb = DEFAULT_SOLVER_MEMORY_LIMIT_MB
+        else:
+            try:
+                memory_limit_mb = float(raw_value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{SOLVER_MEMORY_LIMIT_ENV_VAR} must be a number of MiB, got {raw_value!r}."
+                ) from exc
+    if memory_limit_mb <= 0:
+        return None
+    return float(memory_limit_mb)
+
+
+@contextmanager
+def _solver_timeout(timeout_seconds: float | None, *, name: str, split: str, instance_id: object | None = None):
+    resolved = _resolved_solver_timeout(timeout_seconds)
+    if resolved is None or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    old_handler = signal.getsignal(signal.SIGALRM)
+    old_timer = signal.getitimer(signal.ITIMER_REAL)
+
+    def _handle_timeout(signum, frame):
+        instance_detail = "" if instance_id is None else f" on instance `{instance_id}`"
+        raise SolverTimeoutError(
+            f"Solver `{name}` on split `{split}`{instance_detail} exceeded per-instance "
+            f"evaluation timeout of {resolved:.1f} seconds."
+        )
+
+    signal.signal(signal.SIGALRM, _handle_timeout)
+    signal.setitimer(signal.ITIMER_REAL, resolved)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, old_handler)
+        if old_timer[0] > 0.0:
+            signal.setitimer(signal.ITIMER_REAL, old_timer[0], old_timer[1])
+
+
+@contextmanager
+def _solver_memory_limit(memory_limit_mb: float | None):
+    resolved = _resolved_solver_memory_limit_mb(memory_limit_mb)
+    if resolved is None:
+        yield
+        return
+
+    limit_bytes = int(resolved * 1024 * 1024)
+    old_soft, old_hard = resource.getrlimit(resource.RLIMIT_AS)
+    new_soft = limit_bytes
+    if old_hard != resource.RLIM_INFINITY:
+        new_soft = min(new_soft, old_hard)
+    if old_soft != resource.RLIM_INFINITY:
+        new_soft = min(new_soft, old_soft)
+
+    resource.setrlimit(resource.RLIMIT_AS, (new_soft, old_hard))
+    try:
+        yield
+    finally:
+        resource.setrlimit(resource.RLIMIT_AS, (old_soft, old_hard))
+
+
+def _memory_limit_error(name: str, split: str, memory_limit_mb: float | None, exc: MemoryError) -> str:
+    resolved = _resolved_solver_memory_limit_mb(memory_limit_mb)
+    if resolved is None:
+        return f"MemoryError: {exc}"
+    detail = str(exc).strip()
+    base = (
+        f"MemoryError: Solver `{name}` on split `{split}` exceeded evaluation memory limit "
+        f"of {resolved:.1f} MiB."
+    )
+    if detail:
+        return f"{base} {detail}"
+    return base
 
 
 def _instance_failure(
@@ -107,6 +231,35 @@ def evaluate_solver(
     split: str,
     feedback_limit: int = 3,
     diagnostics_path: Path | None = None,
+    timeout_seconds: float | None = None,
+    memory_limit_mb: float | None = None,
+) -> dict[str, object]:
+    try:
+        with _solver_memory_limit(memory_limit_mb):
+            return _evaluate_solver_unchecked(
+                problem_name,
+                name,
+                solver,
+                instances,
+                split=split,
+                feedback_limit=feedback_limit,
+                diagnostics_path=diagnostics_path,
+                timeout_seconds=timeout_seconds,
+            )
+    except MemoryError as exc:
+        return failed_summary(name, split, len(instances), _memory_limit_error(name, split, memory_limit_mb, exc))
+
+
+def _evaluate_solver_unchecked(
+    problem_name: str,
+    name: str,
+    solver: Solver,
+    instances: list[dict[str, object]],
+    *,
+    split: str,
+    feedback_limit: int = 3,
+    diagnostics_path: Path | None = None,
+    timeout_seconds: float | None = None,
 ) -> dict[str, object]:
     problem = get_problem_definition(problem_name)
     if not instances:
@@ -128,15 +281,34 @@ def evaluate_solver(
         metadata: dict[str, object] | None = None
         start = time.perf_counter()
         try:
-            solver_result = solver(exposed_instance)
+            with _solver_timeout(
+                timeout_seconds,
+                name=name,
+                split=split,
+                instance_id=instance.get("id"),
+            ):
+                solver_result = solver(exposed_instance)
+                runtime_seconds = time.perf_counter() - start
+                if isinstance(solver_result, SolveOutcome):
+                    raw_solution = solver_result.solution
+                    metadata = dict(solver_result.metadata or {})
+                else:
+                    raw_solution = solver_result
+                solution = problem.canonicalize_solution(raw_solution, exposed_instance)
+                score = problem.score_solution(instance, solution)
+        except SolverTimeoutError as exc:
             runtime_seconds = time.perf_counter() - start
-            if isinstance(solver_result, SolveOutcome):
-                raw_solution = solver_result.solution
-                metadata = dict(solver_result.metadata or {})
-            else:
-                raw_solution = solver_result
-            solution = problem.canonicalize_solution(raw_solution, exposed_instance)
-            score = problem.score_solution(instance, solution)
+            solution = []
+            score = ScoreResult(
+                is_valid=False,
+                is_feasible=False,
+                objective_value=0.0,
+                normalized_quality=0.0,
+                is_optimal=False,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        except MemoryError:
+            raise
         except Exception as exc:
             runtime_seconds = time.perf_counter() - start
             solution = []
@@ -242,6 +414,8 @@ def evaluate_solver_repeated(
     repeats: int,
     feedback_limit: int = 3,
     diagnostics_path: Path | None = None,
+    timeout_seconds: float | None = None,
+    memory_limit_mb: float | None = None,
 ) -> dict[str, object]:
     if repeats <= 0:
         raise ValueError("repeats must be positive.")
@@ -257,6 +431,8 @@ def evaluate_solver_repeated(
                 split=split,
                 feedback_limit=feedback_limit,
                 diagnostics_path=diagnostics_path if not trials else None,
+                timeout_seconds=timeout_seconds,
+                memory_limit_mb=memory_limit_mb,
             )
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"

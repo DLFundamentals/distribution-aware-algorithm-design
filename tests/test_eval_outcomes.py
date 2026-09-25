@@ -79,6 +79,71 @@ class SolveOutcomeEvaluatorTests(unittest.TestCase):
         self.assertEqual(summary["average_gurobi_runtime_ms_std"], 0.0)
         self.assertEqual(summary["gurobi_runtime_trial_count"], 2)
 
+    def test_evaluate_solver_times_out_hanging_solver_per_instance(self) -> None:
+        slow_instance = {
+            "id": "toy-mis-timeout",
+            "num_vertices": 2,
+            "edges": [[0, 1]],
+            "optimum_objective": 1.0,
+        }
+        fast_instance = {
+            "id": "toy-mis-fast-after-timeout",
+            "num_vertices": 2,
+            "edges": [[0, 1]],
+            "optimum_objective": 1.0,
+        }
+
+        def solver(instance: dict[str, object]) -> list[int]:
+            if instance["id"] == "toy-mis-timeout":
+                time.sleep(1.0)
+            return [0]
+
+        start = time.perf_counter()
+        summary = evaluate_solver(
+            "mis",
+            "slow_solver",
+            solver,
+            [slow_instance, fast_instance],
+            split="validation",
+            timeout_seconds=0.05,
+        )
+
+        self.assertLess(time.perf_counter() - start, 0.5)
+        self.assertEqual(summary["feasibility_rate"], 0.5)
+        self.assertLess(float(summary["average_runtime_ms"]), 100.0)
+        self.assertEqual(summary["error_count"], 1)
+        self.assertNotIn("error", summary)
+        self.assertEqual(summary["failure_cases"][0]["instance_id"], "toy-mis-timeout")
+        self.assertIn("SolverTimeoutError", str(summary["failure_cases"][0]["error"]))
+
+    def test_evaluate_solver_fails_memory_hungry_solver(self) -> None:
+        instance = {
+            "id": "toy-mis-memory",
+            "num_vertices": 2,
+            "edges": [[0, 1]],
+            "optimum_objective": 1.0,
+        }
+
+        def solver(_: dict[str, object]) -> list[int]:
+            _ = bytearray(2 * 1024 * 1024 * 1024)
+            return [0]
+
+        summary = evaluate_solver(
+            "mis",
+            "memory_hungry_solver",
+            solver,
+            [instance],
+            split="validation",
+            memory_limit_mb=1024,
+        )
+
+        self.assertEqual(summary["feasibility_rate"], 0.0)
+        self.assertEqual(summary["average_runtime_ms"], 1_000_000.0)
+        self.assertIn("MemoryError", str(summary["error"]))
+        self.assertIn("1024.0 MiB", str(summary["error"]))
+        self.assertEqual(summary["failure_cases"][0]["instance_id"], "__evaluation__")
+        self.assertIn("MemoryError", str(summary["failure_cases"][0]["error"]))
+
 
 if __name__ == "__main__":
     unittest.main()

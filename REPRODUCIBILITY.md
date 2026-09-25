@@ -107,6 +107,37 @@ PACE private heuristic instances are released by the competition repository, but
 or optimal labels are not included. The report compares feasibility, solution sizes, proxy fields, and
 available baseline runtimes; it is not an official PACE score.
 
+## Additional PACE Competition Imports
+
+Build the pragmatic first-pass PACE imports without running synthesis:
+
+```bash
+python -m benchmarks.pace_competitions --competition pace2025_hs --build-only
+python -m benchmarks.pace_competitions --competition pace2024_ocm_exact --build-only
+python -m benchmarks.pace_competitions --competition pace2024_ocm_cutwidth --build-only
+python -m benchmarks.pace_competitions --competition pace2022_dfvs_heuristic --build-only
+```
+
+The OCM exact and cutwidth imports use released solution archives when a `.sol` member is present.
+The HS and DFVS heuristic imports use lower-bound proxy objectives plus local reference-solver
+metadata, so their normalized quality is not an official PACE score.
+
+External competition solvers are installed from pinned Git commits into ignored artifact paths:
+
+```bash
+python -m benchmarks.pace_competitions \
+  --competition pace2025_hs \
+  --install-solvers \
+  --solvers root,greeduce,shadoks,fontanf
+
+python -m benchmarks.pace_competitions \
+  --competition pace2025_hs \
+  --run-baselines \
+  --solvers root,greeduce \
+  --build-only \
+  --test-count 5
+```
+
 ## Result Export
 
 Collect completed target reports and selected candidate code into a compact export folder:

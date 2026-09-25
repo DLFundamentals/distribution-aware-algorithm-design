@@ -40,6 +40,14 @@ BASELINE_FIELDNAMES = [
     "solution_file",
     "stderr_file",
     "error",
+    "gurobi_runtime_ms",
+    "gurobi_status",
+    "gurobi_objective_value",
+    "gurobi_best_bound",
+    "gurobi_mip_gap",
+    "gurobi_node_count",
+    "gurobi_solution_count",
+    "gurobi_time_limit_hit",
     "source_dir",
     "row_source",
 ]
@@ -69,6 +77,11 @@ def _csv_value(value: object) -> object:
     if value is None:
         return ""
     return value
+
+
+def _display_solver_name(solver: object) -> str:
+    text = str(solver)
+    return text.removeprefix("dasbench_")
 
 
 def _canonical_instance_id(instance_id: str) -> str:
@@ -143,6 +156,7 @@ def _agent_rows(pace_results_csv: Path) -> tuple[list[dict[str, str]], dict[str,
 
 def _row_from_baseline_csv(row: dict[str, str], *, source_dir: Path) -> dict[str, Any]:
     payload = {key: row.get(key, "") for key in BASELINE_FIELDNAMES}
+    payload["solver"] = _display_solver_name(payload["solver"])
     payload["instance_id"] = _canonical_instance_id(str(payload["instance_id"]))
     payload["source_dir"] = str(source_dir)
     payload["row_source"] = "baseline_results_csv"
@@ -225,7 +239,7 @@ def _reconstruct_solution_row(
         valid_status = "verified_valid" if valid else "invalid"
     stderr_file = baseline_dir / "stderr" / solver / f"{instance_id}.stderr.txt"
     return {
-        "solver": solver,
+        "solver": _display_solver_name(solver),
         "instance_id": instance_id,
         "pace_source_path": relative_path,
         "num_vertices": "" if num_vertices is None else num_vertices,
@@ -332,6 +346,8 @@ def _agent_summary(
     agent_rows: list[dict[str, str]],
 ) -> dict[str, Any]:
     best_candidate = synthesis_summary.get("best_candidate", {})
+    solution_sizes = [_int_or_none(row.get("solution_size")) for row in agent_rows]
+    solution_sizes = [value for value in solution_sizes if value is not None]
     reference_comparisons = []
     for row in agent_rows:
         solution_size = _int_or_none(row.get("solution_size"))
@@ -347,6 +363,7 @@ def _agent_summary(
         "validation": best_candidate.get("validation"),
         "test": best_candidate.get("test"),
         "pace_evaluation": pace_evaluation_summary,
+        "median_solution_size": statistics.median(solution_sizes) if solution_sizes else None,
         "reference_comparison": {
             "count": len(reference_comparisons),
             "agent_better_count": sum(1 for delta in reference_comparisons if delta < 0),
@@ -383,6 +400,7 @@ def _solver_summaries(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             "runtime_known_count": len(runtime_values),
             "total_solution_size": sum(solution_sizes),
             "average_solution_size": statistics.mean(solution_sizes) if solution_sizes else None,
+            "median_solution_size": statistics.median(solution_sizes) if solution_sizes else None,
             "average_runtime_ms": statistics.mean(runtime_values) if runtime_values else None,
             **comparisons,
         }
@@ -403,6 +421,7 @@ def _average_solution_runtime_table(
             "coverage": agent_instances,
             "solution_count": _int_or_none(pace_eval.get("feasible_count")) or agent_instances,
             "average_solution_length": _float_or_none(pace_eval.get("average_solution_size")),
+            "median_solution_length": agent.get("median_solution_size"),
             "average_runtime_ms": _float_or_none(pace_eval.get("average_runtime_ms")),
             "runtime_known_count": agent_instances,
             "validity_note": "feasible PACE-format solutions",
@@ -416,6 +435,7 @@ def _average_solution_runtime_table(
                 "coverage": summary["covered_instance_count"],
                 "solution_count": summary["solution_count"],
                 "average_solution_length": summary["average_solution_size"],
+                "median_solution_length": summary["median_solution_size"],
                 "average_runtime_ms": summary["average_runtime_ms"],
                 "runtime_known_count": summary["runtime_known_count"],
                 "validity_note": (
@@ -552,7 +572,11 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
             row["coverage"],
             row["solution_count"],
             _format_number(row["average_solution_length"], digits=2),
-            _format_number(row["average_runtime_ms"], digits=1),
+            _format_number(row["median_solution_length"], digits=2),
+            _format_number(
+                None if row["average_runtime_ms"] is None else row["average_runtime_ms"] / 1000.0,
+                digits=2,
+            ),
             row["runtime_known_count"],
             row["validity_note"],
         ]
@@ -569,11 +593,15 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
                 summary["parse_only_count"],
                 _format_number(summary["total_solution_size"], digits=0),
                 _format_number(summary["average_solution_size"], digits=2),
+                _format_number(summary["median_solution_size"], digits=2),
                 summary["compared_to_agent_count"],
                 summary["baseline_better_count"],
                 summary["agent_better_count"],
                 summary["tie_count"],
-                _format_number(summary["average_runtime_ms"], digits=1),
+                _format_number(
+                    None if summary["average_runtime_ms"] is None else summary["average_runtime_ms"] / 1000.0,
+                    digits=2,
+                ),
             ]
         )
     top_rows = [
@@ -608,7 +636,8 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
         f"- Feasible count: `{pace_eval.get('feasible_count')}`",
         f"- Total solution size: `{pace_eval.get('total_solution_size')}`",
         f"- Average solution size: `{_format_number(pace_eval.get('average_solution_size'), digits=2)}`",
-        f"- Average runtime ms: `{_format_number(pace_eval.get('average_runtime_ms'), digits=1)}`",
+        f"- Median solution size: `{_format_number(agent.get('median_solution_size'), digits=2)}`",
+        f"- Average runtime seconds: `{_format_number(None if _float_or_none(pace_eval.get('average_runtime_ms')) is None else _float_or_none(pace_eval.get('average_runtime_ms')) / 1000.0, digits=2)}`",
         f"- Compared with adapter reference proxy: agent better `{ref['agent_better_count']}`, worse `{ref['agent_worse_count']}`, tied `{ref['tie_count']}` over `{ref['count']}` instances.",
         "",
         "## Average Solution Length And Runtime",
@@ -620,7 +649,8 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
                 "coverage",
                 "solutions",
                 "avg solution length",
-                "avg runtime ms",
+                "median solution length",
+                "avg runtime seconds",
                 "runtime known",
                 "validity note",
             ],
@@ -638,11 +668,12 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
                 "parse-only",
                 "total size",
                 "avg size",
+                "median size",
                 "compared",
                 "baseline better",
                 "agent better",
                 "ties",
-                "avg runtime ms",
+                "avg runtime seconds",
             ],
             rows,
         ),

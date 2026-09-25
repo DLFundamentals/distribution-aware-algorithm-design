@@ -7,6 +7,7 @@ import multiprocessing
 import time
 from pathlib import Path
 
+from dasbench.agents.agent_loop import run_agent_synthesis_loop
 from dasbench.agents.llm import run_llm_no_hint_synthesis_loop, run_llm_synthesis_loop
 from dasbench.agents.template import run_template_synthesis_loop
 from dasbench.artifacts import default_agent_run_dir, default_dataset_dir, default_report_dir
@@ -19,7 +20,7 @@ from dasbench.integrations import (
     NativeExactConfig,
     build_external_exact_solvers,
     build_gurobi_solver,
-    load_openai_api_config,
+    load_chat_api_config,
     load_openai_dotenv,
     openai_api_is_configured,
 )
@@ -38,8 +39,8 @@ def _resolve_generator(generator: str) -> str:
 
 
 def _ensure_generator_ready(generator: str) -> None:
-    if generator in {"llm", "llm_no_hint"}:
-        load_openai_api_config(required=True)
+    if generator in {"llm", "llm_no_hint", "agent"}:
+        load_chat_api_config(required=True)
 
 
 def _build_spec_from_args(args: argparse.Namespace) -> BenchmarkSpec:
@@ -361,12 +362,16 @@ def _run_baselines(
     timing_reporter: BenchmarkTimingReporter | None = None,
 ) -> tuple[dict[str, dict[str, dict[str, object]]], dict[str, object]]:
     manifest = load_manifest(dataset_dir)
+    train_public = load_split(dataset_dir, "train", public=True)
+    validation_public = load_split(dataset_dir, "validation", public=True)
     baselines, external_discovery = resolve_baselines(
         str(manifest["problem"]),
         gurobi_config=gurobi_config,
         native_exact_config=native_exact_config,
         external_config=external_config,
         artifact_dir=output_dir,
+        train_instances=train_public,
+        validation_instances=validation_public,
     )
     write_external_discovery(output_dir, external_discovery)
     split_results: dict[str, dict[str, dict[str, object]]] = {}
@@ -392,6 +397,8 @@ def _run_baselines(
             if baseline_name not in split_summaries
         ]
         worker_count = max(1, int(baseline_workers))
+        if any(name.startswith("ml_") for name in pending_baseline_names):
+            worker_count = 1
         if not pending_baseline_names:
             split_results[split_name] = split_summaries
             continue
@@ -605,6 +612,8 @@ def cmd_run_agent(args: argparse.Namespace) -> int:
         runner = run_llm_synthesis_loop
     elif generator == "llm_no_hint":
         runner = run_llm_no_hint_synthesis_loop
+    elif generator == "agent":
+        runner = run_agent_synthesis_loop
     else:
         runner = run_template_synthesis_loop
     synthesis_extra = {
@@ -1048,7 +1057,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--dataset-dir", required=True)
     run_parser.add_argument("--run-id")
     run_parser.add_argument("--output-dir")
-    run_parser.add_argument("--generator", choices=["auto", "template", "llm", "llm_no_hint"], default="auto")
+    run_parser.add_argument("--generator", choices=["auto", "template", "llm", "llm_no_hint", "agent"], default="auto")
     run_parser.add_argument("--mode", choices=["single", "beam"], default="beam")
     run_parser.add_argument("--iterations", type=int, default=3)
     run_parser.add_argument("--beam-width", type=int, default=3)
@@ -1081,7 +1090,7 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--run-id")
     benchmark_parser.add_argument("--run-output-dir")
     benchmark_parser.add_argument("--report-output-dir")
-    benchmark_parser.add_argument("--generator", choices=["auto", "template", "llm", "llm_no_hint"], default="auto")
+    benchmark_parser.add_argument("--generator", choices=["auto", "template", "llm", "llm_no_hint", "agent"], default="auto")
     benchmark_parser.add_argument("--mode", choices=["single", "beam"], default="beam")
     benchmark_parser.add_argument("--iterations", type=int, default=3)
     benchmark_parser.add_argument("--beam-width", type=int, default=3)
