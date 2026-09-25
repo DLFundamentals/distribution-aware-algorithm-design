@@ -87,7 +87,7 @@ Across **21 structured distributions** over **7 problem classes**, the synthesiz
 <tr><th align="left">Comparator</th><th>Quality Δ</th><th>Speedup</th></tr>
 </thead>
 <tbody>
-<tr><td align="left">Fast high-quality heuristic</td><td><strong>+0.109</strong></td><td><strong>564.9×</strong></td></tr>
+<tr><td align="left">Fast high-quality heuristic</td><td><strong>+0.109</strong></td><td><strong>528.6×</strong></td></tr>
 <tr><td align="left">Gurobi (10s, 1 thread)</td><td>—</td><td><strong>345.1×</strong></td></tr>
 <tr><td align="left">Time-limited exact backend</td><td>—</td><td><strong>16.9×</strong></td></tr>
 <tr><td align="left">One-shot Codex</td><td>−0.016 <em>(≈ tie)</em></td><td><strong>4.5×</strong></td></tr>
@@ -220,7 +220,7 @@ On the released **private** instances — large sparse graphs, up to ~4.2M verti
 
 </div>
 
-<sub><strong>Ours / solver size &gt; 1</strong> = the PACE solver returns a smaller set. <strong>Speedup</strong> = how much faster ours runs. <sup>*</sup>Swats is valid on only 75/100 instances; its numbers are on that matched subset. Exact-style baselines and Gurobi time out at the 360&nbsp;s cap; the ML baselines cannot run at this scale.</sub>
+<sub>The same pipeline also runs on PACE 2025 Hitting Set, both PACE 2024 OCM tracks, and PACE 2022 DFVS; see <a href="REPRODUCIBILITY.md">REPRODUCIBILITY.md</a>. <strong>Ours / solver size &gt; 1</strong> = the PACE solver returns a smaller set. <strong>Speedup</strong> = how much faster ours runs. <sup>*</sup>Swats is valid on only 75/100 instances; its numbers are on that matched subset. Exact-style baselines and Gurobi time out at the 360&nbsp;s cap; the ML baselines cannot run at this scale.</sub>
 
 ---
 
@@ -282,12 +282,13 @@ python main.py benchmark --all-families --max-parallel 4
 distribution-aware-algorithm-design/
 ├── dasbench/          core framework: problems, families, baselines, synthesis loop
 │   └── prompts/       LLM system prompt used by the generator
-├── benchmarks/        paper-facing sweep suites and ablations
+├── benchmarks/        paper-facing sweep suites, PACE competitions, ablations
+├── baselines/         learned baselines (one architecture-matched model per problem)
 ├── scripts/           helper scripts
 ├── tests/             test suite
 ├── main.py            CLI: generate / run-agent / report / benchmark
 ├── REPRODUCIBILITY.md full reproduction notes (incl. PACE 2025)
-└── .env.example
+└── .env.example       (.env.local-vllm.example for a local vLLM server)
 ```
 
 Datasets, candidates, and reports are written under `artifacts/` and are intentionally **not** committed — regenerate them with the commands above.
