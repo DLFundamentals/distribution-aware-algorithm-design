@@ -13,12 +13,14 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
+from dasbench.artifacts import main_sweep_root
+
 
 DEFAULT_OUTPUT_DIR = Path("results/collected_experiment_results_20260609")
 DEFAULT_CANDIDATE_OUTPUT_DIR = Path("results/candidate_results")
 
 RUN_SOURCES = {
-    "second_scale_v2": Path("artifacts/second_scale_benchmark_v2/20260427_230552"),
+    "second_scale_v2": main_sweep_root(),
     "sample_size_sweep": Path("artifacts/sample_size_sweep/20260502_211019"),
     "problem_size_sweep": Path("artifacts/problem_size_sweep/20260501_012438"),
     "iteration_count_sweep": Path("artifacts/iteration_count_sweep/20260501_012522"),
@@ -1173,7 +1175,7 @@ def write_candidate_report(
     lines = [
         "# Second-Scale v2 Candidate Results",
         "",
-        "- Source artifact: `artifacts/second_scale_benchmark_v2/20260427_230552`",
+        f"- Source artifact: `{main_sweep_root()}`",
         "- `candidate_metrics.csv`: one row per synthesized candidate with generation/evaluation metrics.",
         "- `candidate_metrics.json`: JSON copy of the candidate table.",
         "- `candidate_summary_by_target.csv`: compact per-target candidate counts and selected-candidate metrics.",

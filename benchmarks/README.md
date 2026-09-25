@@ -11,7 +11,6 @@ them locally, or provide them through an anonymous external artifact archive for
 | Experiment | Supports | Command | Artifact dependency |
 | --- | --- | --- | --- |
 | Main Paper Benchmark | Headline quality/runtime results and per-target table | `python -m benchmarks.main_paper_benchmark --max-workers 21` | Starts from scratch |
-| Legacy second-scale benchmark | Older per-problem calibrated benchmark | `python -m benchmarks.second_scale_benchmark --max-workers 4` | Starts from scratch |
 | Sample Size | Sample-size ablation | `python -m benchmarks.sample_size_sweep --validation-size 32 --max-workers 4` | Starts from scratch |
 | Problem Size | Problem-size and solver-transfer curves | `python -m benchmarks.problem_size_sweep --max-workers 4` | Starts from scratch |
 | Candidate Count | Candidate-width ablation | `python -m benchmarks.candidate_count_sweep --max-workers 4` | Starts from scratch |

@@ -26,6 +26,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dasbench.artifacts import main_sweep_root
 from scripts.collect_all_experiment_results import solver_role
 
 CONDITION = "seconds_scale_v2"
@@ -125,7 +126,7 @@ def _ratio(num, den):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--main-run", default="artifacts/second_scale_benchmark_v2/20260427_230552")
+    ap.add_argument("--main-run", default=str(main_sweep_root()))
     ap.add_argument("--out-root", default="results/exp4_honest_runtime")
     args = ap.parse_args()
     main_run = Path(args.main_run)

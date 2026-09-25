@@ -35,6 +35,8 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dasbench.artifacts import main_sweep_root
+
 # Canonical 21-target order (problem/family), to mirror the paper table layout.
 TARGET_ORDER = [
     "coloring/cluster_ring_mix_v1",
@@ -134,7 +136,7 @@ def discover_legacy(legacy_root: Path, prefix: str) -> dict[str, list[dict]]:
 
 
 # Where the cached, single-run baseline metrics live (same frozen main run the sweep reuses).
-BASELINE_SOURCE_RUN_ROOT = "artifacts/second_scale_benchmark_v2/20260427_230552"
+BASELINE_SOURCE_RUN_ROOT = str(main_sweep_root())
 BASELINE_SOURCE_CONDITION_ID = "seconds_scale_v2"
 
 
@@ -256,6 +258,11 @@ def main() -> None:
     )
     ap.add_argument("--source-condition-id", default=BASELINE_SOURCE_CONDITION_ID)
     ap.add_argument("--out-root", default="results/exp6_variance")
+    ap.add_argument(
+        "--run-note",
+        default="",
+        help="Free-text provenance recorded in the generated table, e.g. the model, generator and widths.",
+    )
     args = ap.parse_args()
 
     if not args.sweep_root and not args.legacy_root:
@@ -325,7 +332,7 @@ def main() -> None:
 
     # ---- variance_table.md ---- (stats over successful runs only)
     lines = [
-        "# Experiment 6a - Seed variance (local Gemma4, agent generator)",
+        "# Experiment 6a - Seed variance",
         "",
         f"Generated {ts} UTC - commit `{commit}`",
         "",
@@ -493,9 +500,8 @@ def main() -> None:
 - targets: {len(TARGET_ORDER)}
 - runs found: {total_runs} (successful: {ok_total}, excluded-failed: {n_failed_total})
 
-Model: gemma-4-31b-it via local vLLM (:8001), `--generator agent`, beam/iterations/candidate-width = 3/3/3,
-datasets reused from `second_scale_benchmark_v2/20260427_230552` (train=64/val=32/test=500),
-baselines skipped. Seeds are independent vLLM draws (no pinned decode seed).
+Run settings: {args.run_note or "(pass --run-note to record model, generator and widths)"}
+Datasets reused from `{args.source_run_root or "(none)"}` (train=64/val=32/test=500), baselines skipped.
 
 Metric mean/std are over **successful** runs. A run is excluded when its selected solver failed
 at deployment (feasibility=0 on test / errored / sentinel penalty runtime {int(SENTINEL_RUNTIME_MS)} ms);

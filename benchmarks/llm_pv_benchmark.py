@@ -21,6 +21,7 @@ from benchmarks.common import (
     selected_targets,
     write_aggregate_outputs,
 )
+from dasbench.artifacts import main_sweep_root
 from dasbench.agents.candidate import build_solver
 from dasbench.agents.progress import selection_sort_key, summarize_selection
 from dasbench.data import load_manifest, load_split
@@ -46,7 +47,7 @@ from dasbench.utils import candidate_manifest, public_instance, timestamp_token,
 
 BENCHMARK_KIND = "llm_pv_benchmark"
 CONDITION_ID = "llm_pv"
-DEFAULT_SOURCE_RUN_ROOT = Path("artifacts/second_scale_benchmark_v2/20260427_230552")
+DEFAULT_SOURCE_RUN_ROOT = main_sweep_root()
 DEFAULT_SOURCE_CONDITION_ID = "seconds_scale_v2"
 OPENAI_MODEL_ENV_VAR = "OPENAI_MODEL"
 OPENAI_REASONING_EFFORT_ENV_VAR = "OPENAI_REASONING_EFFORT"

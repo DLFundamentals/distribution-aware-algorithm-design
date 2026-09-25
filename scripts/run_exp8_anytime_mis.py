@@ -29,9 +29,10 @@ import tempfile
 import time
 from pathlib import Path
 
+from dasbench.artifacts import MAIN_SWEEP_CONDITION_ID, main_sweep_root
 from dasbench.integrations.external_exact import serialize_metis_graph
 
-MAIN = "artifacts/second_scale_benchmark_v2/20260427_230552/targets/seconds_scale_v2"
+MAIN = str(main_sweep_root() / "targets" / MAIN_SWEEP_CONDITION_ID)
 # KaMIS is built out of tree; point DASBENCH_KAMIS_BUILD_DIR at its build directory.
 KAMIS_BUILD_DIR = os.environ.get("DASBENCH_KAMIS_BUILD_DIR", "~/kamis/build")
 REDUMIS = os.path.expanduser(f"{KAMIS_BUILD_DIR}/redumis")

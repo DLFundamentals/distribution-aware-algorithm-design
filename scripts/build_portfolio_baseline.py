@@ -36,6 +36,8 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dasbench.artifacts import main_sweep_root
+
 PROBLEM_ORDER = ["coloring", "maxsat", "mdkp", "mds", "mis", "packing_lp", "tsp"]
 TARGET_ORDER = [
     "coloring/cluster_ring_mix_v1", "coloring/planted_palette_overlap_v1", "coloring/separator_palette_trap_v1",
@@ -128,7 +130,7 @@ def fmt(x, nd=4):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--main-run", default="artifacts/second_scale_benchmark_v2/20260427_230552")
+    ap.add_argument("--main-run", default=str(main_sweep_root()))
     ap.add_argument("--pace-root", default="artifacts/pace2025_dominating_set")
     ap.add_argument("--out-root", default="results/exp1_portfolio")
     args = ap.parse_args()

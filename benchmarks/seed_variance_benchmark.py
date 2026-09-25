@@ -43,12 +43,13 @@ from benchmarks.common import (
     run_sweep,
     selected_targets,
 )
+from dasbench.artifacts import main_sweep_root
 from dasbench.utils import timestamp_token
 
 SWEEP_KIND = "seed_variance_benchmark"
 
 # Frozen main-run whose datasets are reused so seeds share identical held-out splits.
-DEFAULT_SOURCE_RUN_ROOT = "artifacts/second_scale_benchmark_v2/20260427_230552"
+DEFAULT_SOURCE_RUN_ROOT = str(main_sweep_root())
 DEFAULT_SOURCE_CONDITION_ID = "seconds_scale_v2"
 DEFAULT_ENV_FILE = ".env.gemma4"
 

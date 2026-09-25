@@ -52,8 +52,7 @@ from dasbench.utils import timestamp_token, write_json  # noqa: E402
 DEFAULT_PER_INSTANCE_TIMEOUT_SECONDS = 360.0
 DEFAULT_MAX_TARGET_SECONDS = 3600.0
 DEFAULT_PREFLIGHT_INSTANCES = 3
-# Matches scripts/remeasure_agent_runtime.py: a solver that cannot produce a
-# valid answer is not "instant", it is unusable.
+# A solver that cannot produce a valid answer is not "instant", it is unusable.
 FAILURE_RUNTIME_MS = 1_000_000.0
 
 

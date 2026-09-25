@@ -8,8 +8,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-DEFAULT_INPUT_ROOT = Path("artifacts/ml_baseline_runs/second_scale_v2_20260427_230552")
-DEFAULT_OUTPUT_DIR = Path("results/ml_baseline_second_scale_v2_20260427_230552")
+from dasbench.artifacts import MAIN_SWEEP_CONDITION_ID, main_sweep_root
+
+_MAIN_SWEEP_ID = main_sweep_root().name
+DEFAULT_INPUT_ROOT = Path(f"artifacts/ml_baseline_runs/{MAIN_SWEEP_CONDITION_ID}_{_MAIN_SWEEP_ID}")
+DEFAULT_OUTPUT_DIR = Path(f"results/ml_baseline_{MAIN_SWEEP_CONDITION_ID}_{_MAIN_SWEEP_ID}")
 
 AGGREGATE_FIELDS = [
     "source_run_id",
