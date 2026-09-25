@@ -18,8 +18,7 @@ them locally, or provide them through an anonymous external artifact archive for
 | No-Hint Recovery | Hidden-rule framing ablation | `python -m benchmarks.no_hint_recovery_benchmark --source-run-root "$MAIN_SWEEP_ROOT" --max-workers 4` | Needs a completed main benchmark run |
 | LLM-PV Baseline | Propose-and-verify baseline: sample solver programs, select by validation, evaluate on test | `python -m benchmarks.llm_pv_benchmark --source-run-root "$MAIN_SWEEP_ROOT" --attempts 5 --model gpt-5 --reasoning-effort high --max-workers 1` | Reuses datasets from a completed main benchmark run |
 | Graph Relabel Invariance | Graph presentation perturbation ablation | `python -m benchmarks.graph_relabel_invariance_benchmark --source-run-root "$MAIN_SWEEP_ROOT" --max-workers 4` | Needs a completed main benchmark run |
-| PACE 2025 Dominating Set | External PACE diagnostic | `python -m benchmarks.pace2025_dominating_set --track heuristic --test-source private` | Downloads or reads PACE instances; needs LLM API for synthesis |
-| PACE HS/OCM/DFVS Imports | Additional external PACE benchmarks | `python -m benchmarks.pace_competitions --competition pace2025_hs --build-only` | Downloads or reads PACE instances; optional pinned solver builds |
+| PACE competitions (all) | External PACE experiments, one entrypoint | `python -m benchmarks.pace --list`, then `--competition <name>` | Downloads or reads PACE instances; needs LLM API for synthesis; optional pinned solver builds |
 | Provider Model Sweep | Run main 21-target, LLM-PV, and PACE experiments across custom-chat providers | `python -m scripts.run_provider_model_sweep --dry-run` | Reuses provider env files such as `.env.kimi-k26` |
 
 `$MAIN_SWEEP_ROOT` should point to a completed main benchmark sweep root, for example
@@ -130,10 +129,10 @@ PACE-format solution.
 Additional PACE imports share one CLI:
 
 ```bash
-python -m benchmarks.pace_competitions --competition pace2025_hs --build-only
-python -m benchmarks.pace_competitions --competition pace2024_ocm_exact --build-only
-python -m benchmarks.pace_competitions --competition pace2024_ocm_cutwidth --build-only
-python -m benchmarks.pace_competitions --competition pace2022_dfvs_heuristic --build-only
+python -m benchmarks.pace --competition pace2025_hs --build-only
+python -m benchmarks.pace --competition pace2024_ocm_exact --build-only
+python -m benchmarks.pace --competition pace2024_ocm_cutwidth --build-only
+python -m benchmarks.pace --competition pace2022_dfvs_heuristic --build-only
 ```
 
 ## Provider Model Sweep
@@ -167,12 +166,12 @@ The default providers are `kimi-k26`, `deepseek-v4-pro`, and `glm-52`, backed by
 To install and run pinned external solvers without committing third-party source trees:
 
 ```bash
-python -m benchmarks.pace_competitions \
+python -m benchmarks.pace \
   --competition pace2024_ocm_heuristic \
   --install-solvers \
   --solvers cimat
 
-python -m benchmarks.pace_competitions \
+python -m benchmarks.pace \
   --competition pace2024_ocm_heuristic \
   --run-baselines \
   --solvers cimat \
@@ -197,6 +196,6 @@ python -m benchmarks.problem_size_sweep --dry-run --problem tsp
 python -m benchmarks.candidate_count_sweep --dry-run --problem tsp
 python -m benchmarks.iteration_count_sweep --dry-run --problem tsp
 python -m benchmarks.llm_pv_benchmark --dry-run --problem tsp
-python -m benchmarks.pace2025_dominating_set --help
-python -m benchmarks.pace_competitions --competition pace2024_ocm_exact --build-only --train-count 1 --validation-count 1 --test-count 1
+python -m benchmarks.pace --competition pace2025_ds_heuristic --help
+python -m benchmarks.pace --competition pace2024_ocm_exact --build-only --train-count 1 --validation-count 1 --test-count 1
 ```

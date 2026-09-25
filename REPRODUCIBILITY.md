@@ -8,15 +8,37 @@ regenerated locally or supplied through an anonymous artifact archive for review
 
 ```bash
 uv sync --group dev
-uv run python -m pytest -q
+uv run python -m pytest -q -m "not slow and not gurobi"
 ```
 
-The suite builds datasets and runs solvers, so it takes on the order of fifteen minutes and uses
-every available core. For a quick check that the install works, run a single file first, for
-example `uv run python -m pytest tests/test_benchmark_sweeps.py -q`.
+That is the install check: 191 tests in about 40 seconds, entirely offline.
+
+Two groups are deselected by default and are opt-in:
+
+- `slow` is one end-to-end test that synthesizes and reports on all seven problem classes with the
+  Gurobi and exact baselines at their real time limits. It takes about 75 minutes on its own, which
+  is essentially the whole suite's runtime.
+- `gurobi` marks the tests that build a real Gurobi solver. A WLS license checks out over the
+  network on every environment creation, so these are the only tests that contact an external
+  service. They skip themselves when no license is usable, rather than failing.
+
+```bash
+uv run python -m pytest -q                       # everything
+uv run python -m pytest -q -m "not slow"         # adds the Gurobi tests back
+```
 
 The benchmark runs on CPU. No local GPU path is used for generated solver or baseline evaluation.
-LLM synthesis uses the OpenAI API configured by the environment variables documented in `README.md`.
+
+LLM synthesis works through any of three providers, selected with `LLM_PROVIDER` and configured by
+the environment variables documented in `README.md` and `.env.example`:
+
+- `openai` (the default) for OpenAI or any OpenAI-compatible endpoint. The paper's runs used this
+  with `gpt-5.2` at `xhigh` reasoning effort.
+- `anthropic` for the Claude Messages API.
+- `custom_chat` for a local OpenAI-compatible server such as vLLM.
+
+All three drive the same pipeline and the same response schemas, so a reproduction may use whichever
+is available; the model and provider are recorded in each run's manifest.
 
 Optional solver backends:
 
@@ -50,8 +72,8 @@ Scripts that take an explicit `--main-run` or `--source-run-root` still win over
 | Seed variance | `benchmarks.seed_variance_benchmark`, then `scripts.collect_seed_variance_results` |
 | Portfolio comparison | `scripts.build_portfolio_baseline` |
 | Sample/problem/candidate/iteration ablations | the four sweep modules under **Ablations** |
-| PACE 2025 Dominating Set | `benchmarks.pace2025_dominating_set`, then `scripts.pace2025_collect_heuristic_report` |
-| Other PACE competitions | `benchmarks.pace_competitions`, then `scripts.run_pace_catalog_baselines` |
+| PACE 2025 Dominating Set | `benchmarks.pace --competition pace2025_ds_heuristic`, then `scripts.pace2025_collect_heuristic_report` |
+| Other PACE competitions | `benchmarks.pace --competition <name>`, then `scripts.run_pace_catalog_baselines` |
 | PACE quality-time frontier | `scripts.run_exp3_pace_frontier` |
 | Anytime MIS curves | `scripts.run_exp8_anytime_mis` |
 | Baseline catalog appendix | `scripts.export_baseline_catalog` |
@@ -123,56 +145,76 @@ python -m benchmarks.graph_relabel_invariance_benchmark \
 The no-hint and graph-relabel ablations reuse datasets or selected solvers from a completed main
 benchmark run. They therefore require `--source-run-root`.
 
-## PACE 2025 Diagnostic
+## PACE Competitions
 
-Run one DASBench synthesis pass on PACE 2025 Dominating Set instances:
+Every competition runs through one entrypoint. List what is available:
 
 ```bash
-python -m benchmarks.pace2025_dominating_set \
-  --track heuristic \
+python -m benchmarks.pace --list
+```
+
+`--competition` selects the competition and track; all other flags belong to that competition and
+are shown by `python -m benchmarks.pace --competition <name> --help`.
+
+Run one synthesis pass on the Dominating Set heuristic track, the track the paper reports:
+
+```bash
+python -m benchmarks.pace \
+  --competition pace2025_ds_heuristic \
   --test-source private
 ```
 
-Run selected external PACE heuristic baselines and collect a local comparison report:
+Import the other competitions without running synthesis:
+
+```bash
+python -m benchmarks.pace --competition pace2025_hs --build-only
+python -m benchmarks.pace --competition pace2024_ocm_exact --build-only
+python -m benchmarks.pace --competition pace2024_ocm_cutwidth --build-only
+python -m benchmarks.pace --competition pace2022_dfvs_heuristic --build-only
+```
+
+Dominating Set writes under `artifacts/pace2025_dominating_set/` and the rest under
+`artifacts/pace_competitions/`. The two report different columns -- Dominating Set reports solution
+sizes against a domination lower bound, the others report normalized quality -- and the paper's
+tables read each as it is, so the entrypoint is shared while the artifact layouts are not.
+
+The OCM exact and cutwidth imports use released solution archives when a `.sol` member is present.
+The HS and DFVS heuristic imports use lower-bound proxy objectives plus local reference-solver
+metadata, so their normalized quality is not an official PACE score. PACE private instances are
+released by the competition repositories, but private best-known or optimal labels are not, so none
+of these reports is an official PACE score.
+
+### Released competition solvers
+
+Install from pinned Git commits into ignored artifact paths, then run them as baselines:
+
+```bash
+python -m benchmarks.pace \
+  --competition pace2025_hs \
+  --install-solvers \
+  --solvers root,greeduce,shadoks,fontanf
+
+python -m benchmarks.pace \
+  --competition pace2025_hs \
+  --run-baselines \
+  --solvers root,greeduce \
+  --build-only \
+  --test-count 5
+```
+
+Dominating Set keeps its own baseline runner and report collector, which read its artifact layout:
 
 ```bash
 python -m scripts.pace2025_run_heuristic_baselines --count 5
 python -m scripts.pace2025_collect_heuristic_report
 ```
 
-PACE private heuristic instances are released by the competition repository, but private best-known
-or optimal labels are not included. The report compares feasibility, solution sizes, proxy fields, and
-available baseline runtimes; it is not an official PACE score.
-
-## Additional PACE Competition Imports
-
-Build the pragmatic first-pass PACE imports without running synthesis:
+Registry catalog baselines on any built PACE dataset:
 
 ```bash
-python -m benchmarks.pace_competitions --competition pace2025_hs --build-only
-python -m benchmarks.pace_competitions --competition pace2024_ocm_exact --build-only
-python -m benchmarks.pace_competitions --competition pace2024_ocm_cutwidth --build-only
-python -m benchmarks.pace_competitions --competition pace2022_dfvs_heuristic --build-only
-```
-
-The OCM exact and cutwidth imports use released solution archives when a `.sol` member is present.
-The HS and DFVS heuristic imports use lower-bound proxy objectives plus local reference-solver
-metadata, so their normalized quality is not an official PACE score.
-
-External competition solvers are installed from pinned Git commits into ignored artifact paths:
-
-```bash
-python -m benchmarks.pace_competitions \
-  --competition pace2025_hs \
-  --install-solvers \
-  --solvers root,greeduce,shadoks,fontanf
-
-python -m benchmarks.pace_competitions \
-  --competition pace2025_hs \
-  --run-baselines \
-  --solvers root,greeduce \
-  --build-only \
-  --test-count 5
+python -m scripts.run_pace_catalog_baselines \
+  --dataset-dir artifacts/pace_competitions/<run>/dataset \
+  --run-output-dir artifacts/pace_competitions/<run>/agent_run
 ```
 
 ## Baselines in the comparison tables

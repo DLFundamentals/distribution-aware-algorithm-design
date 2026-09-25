@@ -125,9 +125,9 @@ def _pace_mds_agent_stage(provider: Provider, output_root: Path, *, force: bool)
     provider_root = _provider_root(output_root, provider.name)
     experiment_id = "pace2025_mds_heuristic_agent"
     command = _python_module_command(
-        "benchmarks.pace2025_dominating_set",
-        "--track",
-        "heuristic",
+        "benchmarks.pace",
+        "--competition",
+        "pace2025_ds_heuristic",
         "--test-source",
         "private",
         "--train-count",
@@ -172,7 +172,7 @@ def _pace_competition_agent_stage(
     provider_root = _provider_root(output_root, provider.name)
     experiment_id = f"{competition}_agent"
     command = _python_module_command(
-        "benchmarks.pace_competitions",
+        "benchmarks.pace",
         "--competition",
         competition,
         "--generator",
