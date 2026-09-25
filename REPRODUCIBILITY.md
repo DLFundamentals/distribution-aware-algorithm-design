@@ -11,6 +11,10 @@ uv sync --group dev
 uv run python -m pytest -q
 ```
 
+The suite builds datasets and runs solvers, so it takes on the order of fifteen minutes and uses
+every available core. For a quick check that the install works, run a single file first, for
+example `uv run python -m pytest tests/test_benchmark_sweeps.py -q`.
+
 The benchmark runs on CPU. No local GPU path is used for generated solver or baseline evaluation.
 LLM synthesis uses the OpenAI API configured by the environment variables documented in `README.md`.
 
