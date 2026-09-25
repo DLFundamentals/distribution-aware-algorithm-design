@@ -17,6 +17,14 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from dasbench.integrations.anthropic_api import (
+    ANTHROPIC_PROVIDER,
+    AnthropicAPIConfig,
+    anthropic_message_text,
+    build_anthropic_client,
+    create_anthropic_message_raw,
+    load_anthropic_api_config,
+)
 from dasbench.integrations.openai_api import (
     OpenAIAPIConfig,
     build_openai_client,
@@ -89,7 +97,7 @@ class CustomChatAPIConfig:
         return payload
 
 
-ChatAPIConfig = OpenAIAPIConfig | CustomChatAPIConfig
+ChatAPIConfig = OpenAIAPIConfig | CustomChatAPIConfig | AnthropicAPIConfig
 
 
 def _env_value(name: str) -> str | None:
@@ -325,17 +333,21 @@ def load_chat_api_config(*, required: bool = True) -> ChatAPIConfig | None:
         return load_openai_api_config(required=required)
     if provider == CUSTOM_PROVIDER:
         return load_custom_chat_api_config(required=required)
+    if provider == ANTHROPIC_PROVIDER:
+        return load_anthropic_api_config(required=required)
     if not required:
         return None
     raise RuntimeError(
         f"Unsupported {PROVIDER_ENV_VAR} `{provider}`. "
-        f"Expected `{DEFAULT_PROVIDER}` or `{CUSTOM_PROVIDER}`."
+        f"Expected `{DEFAULT_PROVIDER}`, `{CUSTOM_PROVIDER}` or `{ANTHROPIC_PROVIDER}`."
     )
 
 
-def build_chat_client(config: ChatAPIConfig) -> OpenAI:
+def build_chat_client(config: ChatAPIConfig):
     if isinstance(config, OpenAIAPIConfig):
         return build_openai_client(config)
+    if isinstance(config, AnthropicAPIConfig):
+        return build_anthropic_client(config)
     return OpenAI(api_key=config.api_key, base_url=config.base_url, max_retries=0)
 
 
@@ -360,6 +372,16 @@ def chat_config_with_overrides(
             organization=config.organization,
             project=config.project,
             timeout_seconds=config.timeout_seconds,
+        )
+    if isinstance(config, AnthropicAPIConfig):
+        return AnthropicAPIConfig(
+            api_key=config.api_key,
+            model=resolved_model,
+            reasoning_effort=resolved_reasoning_effort,
+            base_url=config.base_url,
+            timeout_seconds=config.timeout_seconds,
+            max_tokens=config.max_tokens,
+            provider=config.provider,
         )
     return CustomChatAPIConfig(
         api_key=config.api_key,
@@ -629,6 +651,15 @@ def create_chat_completion_raw(
     response_format: dict[str, Any] | None = None,
     timeout: float | None = None,
 ):
+    if isinstance(config, AnthropicAPIConfig):
+        # Anthropic takes a different request shape entirely: system prompt,
+        # max_tokens and output_config rather than response_format.
+        return create_anthropic_message_raw(
+            config,
+            messages=messages,
+            response_format=response_format,
+            timeout=timeout,
+        )
     client = build_chat_client(config)
     request: dict[str, Any] = {
         "messages": messages,
@@ -659,6 +690,9 @@ def create_chat_completion_raw(
 def chat_completion_text(completion: object) -> str:
     choices = getattr(completion, "choices", None)
     if not choices:
+        # An Anthropic Message has content blocks and no choices.
+        if getattr(completion, "content", None) is not None:
+            return anthropic_message_text(completion)
         return ""
     message = getattr(choices[0], "message", None)
     content = getattr(message, "content", None)

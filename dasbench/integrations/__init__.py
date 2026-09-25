@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dasbench.integrations.anthropic_api import (
+    AnthropicAPIConfig,
+    load_anthropic_api_config,
+)
 from dasbench.integrations.external_exact import (
     ExternalExactConfig,
     build_external_exact_solvers,
@@ -28,6 +32,7 @@ from dasbench.integrations.openai_api import (
 )
 
 __all__ = [
+    "AnthropicAPIConfig",
     "ExternalExactConfig",
     "GurobiBaselineConfig",
     "NativeExactConfig",
@@ -43,6 +48,7 @@ __all__ = [
     "create_chat_completion_raw",
     "discover_external_exact_baselines",
     "external_diagnostics_path",
+    "load_anthropic_api_config",
     "load_chat_api_config",
     "load_custom_chat_api_config",
     "load_openai_api_config",

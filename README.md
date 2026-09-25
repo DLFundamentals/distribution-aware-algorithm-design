@@ -230,7 +230,9 @@ On the released **private** instances — large sparse graphs, up to ~4.2M verti
 uv sync
 ```
 
-For the LLM generator, set the OpenAI-compatible variables (see `.env.example`):
+For the LLM generator, pick a provider with `LLM_PROVIDER` and set its variables (see `.env.example`).
+
+OpenAI, or any OpenAI-compatible endpoint:
 
 ```bash
 OPENAI_API_KEY=YOUR_OPENAI_API_KEY
@@ -239,6 +241,19 @@ OPENAI_REASONING_EFFORT=xhigh
 # Optional, for OpenAI-compatible endpoints:
 # OPENAI_BASE_URL=https://api.openai.com/v1
 ```
+
+Anthropic:
+
+```bash
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=YOUR_ANTHROPIC_API_KEY
+ANTHROPIC_MODEL=claude-opus-5
+ANTHROPIC_REASONING_EFFORT=high
+```
+
+Both drive the same synthesis pipeline and the same JSON schemas; the Anthropic path maps them onto
+the Messages API's `output_config` and uses adaptive thinking. A third provider, `custom_chat`,
+targets a local OpenAI-compatible server such as vLLM.
 
 The **template generator** is fully local and needs no API key — the recommended smoke-test path.
 
