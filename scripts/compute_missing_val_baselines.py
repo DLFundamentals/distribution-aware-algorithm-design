@@ -19,7 +19,7 @@ Design (safe + resumable, for running detached across an SSH disconnect):
 
 Detached, disconnect-proof launch (tmux keeps running server-side after you disconnect):
   tmux new -d -s exp1val \
-    'cd /home/saharshk11/dasbench && uv run python -m scripts.compute_missing_val_baselines \
+    'cd "$REPO" && uv run python -m scripts.compute_missing_val_baselines \
        2>&1 | tee -a results/exp1_portfolio/val_baselines.log'
 Watch it:   tail -f results/exp1_portfolio/val_baselines.log     (or: tmux attach -t exp1val)
 Resume:     re-run the exact same command -- finished baselines/targets are skipped.

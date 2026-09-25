@@ -32,8 +32,10 @@ from pathlib import Path
 from dasbench.integrations.external_exact import serialize_metis_graph
 
 MAIN = "artifacts/second_scale_benchmark_v2/20260427_230552/targets/seconds_scale_v2"
-REDUMIS = "/home/saharshk11/kamis/build/redumis"
-ONLINE_MIS = "/home/saharshk11/kamis/build/online_mis"
+# KaMIS is built out of tree; point DASBENCH_KAMIS_BUILD_DIR at its build directory.
+KAMIS_BUILD_DIR = os.environ.get("DASBENCH_KAMIS_BUILD_DIR", "~/kamis/build")
+REDUMIS = os.path.expanduser(f"{KAMIS_BUILD_DIR}/redumis")
+ONLINE_MIS = os.path.expanduser(f"{KAMIS_BUILD_DIR}/online_mis")
 BINARIES = {"redumis": REDUMIS, "online_mis": ONLINE_MIS}
 TARGETS = ["clique_path_mix_v1", "core_fringe_trap_v1", "motif_bridge_mixture_v1"]
 BUDGETS = [0.005, 0.01, 0.02, 0.05, 0.1, 0.5, 1.0]  # --time_limit seconds
