@@ -1123,7 +1123,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--public-start-index", type=int, default=1)
     parser.add_argument("--test-start-index", type=int, default=1)
     parser.add_argument("--build-only", action="store_true")
-    parser.add_argument("--generator", choices=["auto", "template", "llm", "agent"], default="auto")
+    parser.add_argument("--generator", choices=["auto", "template", "llm"], default="auto")
     parser.add_argument("--mode", choices=["single", "beam"], default="beam")
     parser.add_argument("--iterations", type=int, default=2)
     parser.add_argument("--beam-width", type=int, default=3)

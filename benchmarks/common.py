@@ -238,7 +238,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         "--source-condition-id",
         help="Condition id under --source-run-root/targets to reuse. Defaults to each target condition id.",
     )
-    parser.add_argument("--generator", choices=["llm", "llm_no_hint", "template", "auto", "agent"], default="llm")
+    parser.add_argument("--generator", choices=["llm", "llm_no_hint", "template", "auto"], default="llm")
     parser.add_argument("--mode", choices=["single", "beam"], default="beam")
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--beam-width", type=int, default=3)
@@ -908,7 +908,7 @@ def run_sweep(
 ) -> dict[str, object]:
     subprocess_env = _prepare_sweep_env(
         jobs,
-        require_chat_config=any(job.generator in {"llm", "llm_no_hint", "agent"} for job in jobs) and not dry_run,
+        require_chat_config=any(job.generator in {"llm", "llm_no_hint"} for job in jobs) and not dry_run,
     )
 
     output_dir = resolve_sweep_artifact_root(output_root, sweep_kind, sweep_id)

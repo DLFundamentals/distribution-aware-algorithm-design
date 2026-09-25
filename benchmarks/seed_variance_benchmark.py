@@ -127,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(
         # Local-model Experiment 6a defaults; override on the CLI for the GPT-5.2 sub-part.
-        generator="agent",
+        generator="llm",
         source_run_root=DEFAULT_SOURCE_RUN_ROOT,
         source_condition_id=DEFAULT_SOURCE_CONDITION_ID,
         env_file=DEFAULT_ENV_FILE,

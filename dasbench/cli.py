@@ -7,7 +7,6 @@ import multiprocessing
 import time
 from pathlib import Path
 
-from dasbench.agents.agent_loop import run_agent_synthesis_loop
 from dasbench.agents.llm import run_llm_no_hint_synthesis_loop, run_llm_synthesis_loop
 from dasbench.agents.template import run_template_synthesis_loop
 from dasbench.artifacts import default_agent_run_dir, default_dataset_dir, default_report_dir
@@ -39,7 +38,7 @@ def _resolve_generator(generator: str) -> str:
 
 
 def _ensure_generator_ready(generator: str) -> None:
-    if generator in {"llm", "llm_no_hint", "agent"}:
+    if generator in {"llm", "llm_no_hint"}:
         load_chat_api_config(required=True)
 
 
@@ -612,8 +611,6 @@ def cmd_run_agent(args: argparse.Namespace) -> int:
         runner = run_llm_synthesis_loop
     elif generator == "llm_no_hint":
         runner = run_llm_no_hint_synthesis_loop
-    elif generator == "agent":
-        runner = run_agent_synthesis_loop
     else:
         runner = run_template_synthesis_loop
     synthesis_extra = {
@@ -1057,7 +1054,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--dataset-dir", required=True)
     run_parser.add_argument("--run-id")
     run_parser.add_argument("--output-dir")
-    run_parser.add_argument("--generator", choices=["auto", "template", "llm", "llm_no_hint", "agent"], default="auto")
+    run_parser.add_argument("--generator", choices=["auto", "template", "llm", "llm_no_hint"], default="auto")
     run_parser.add_argument("--mode", choices=["single", "beam"], default="beam")
     run_parser.add_argument("--iterations", type=int, default=3)
     run_parser.add_argument("--beam-width", type=int, default=3)
@@ -1090,7 +1087,7 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--run-id")
     benchmark_parser.add_argument("--run-output-dir")
     benchmark_parser.add_argument("--report-output-dir")
-    benchmark_parser.add_argument("--generator", choices=["auto", "template", "llm", "llm_no_hint", "agent"], default="auto")
+    benchmark_parser.add_argument("--generator", choices=["auto", "template", "llm", "llm_no_hint"], default="auto")
     benchmark_parser.add_argument("--mode", choices=["single", "beam"], default="beam")
     benchmark_parser.add_argument("--iterations", type=int, default=3)
     benchmark_parser.add_argument("--beam-width", type=int, default=3)
