@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
 from dasbench.integrations.chat_api import (
     CUSTOM_API_BASE_URL_ENV_VAR,
     CUSTOM_API_KEY_ENV_VAR,
+    CUSTOM_KEY_STATE_FILE_ENV_VAR,
+    CUSTOM_KEY_WAIT_FOR_RESET_ENV_VAR,
+    _mark_key_spent,
+    _rotation_order,
+    _split_api_keys,
     CUSTOM_MAX_TOKENS_ENV_VAR,
     CUSTOM_MODEL_ENV_VAR,
     CUSTOM_PROVIDER,
@@ -386,6 +392,146 @@ class ChatAPIRequestTests(unittest.TestCase):
         with patch("benchmarks.llm_pv_benchmark.load_chat_api_config", return_value=api_config):
             with self.assertRaisesRegex(RuntimeError, "Code interpreter"):
                 _call_llm_for_solution(messages=[{"role": "user", "content": "hello"}], config=config)
+
+
+class PooledChatAPIKeyTests(unittest.TestCase):
+    def test_single_key_parses_unchanged(self) -> None:
+        self.assertEqual(_split_api_keys("only-key"), ("only-key",))
+
+    def test_keys_split_on_commas_and_whitespace_and_dedupe(self) -> None:
+        raw = 'key-a, key-b\nkey-c  key-a  "key-d"'
+        self.assertEqual(_split_api_keys(raw), ("key-a", "key-b", "key-c", "key-d"))
+
+    def test_config_load_keeps_every_pooled_key(self) -> None:
+        env = {
+            PROVIDER_ENV_VAR: CUSTOM_PROVIDER,
+            CUSTOM_API_KEY_ENV_VAR: "key-a,key-b,key-c",
+            CUSTOM_API_BASE_URL_ENV_VAR: "https://example.test/api",
+            CUSTOM_MODEL_ENV_VAR: "custom-model",
+        }
+        with _without_dotenv(), patch.dict(os.environ, env, clear=True):
+            config = load_chat_api_config()
+        self.assertEqual(config.api_keys, ("key-a", "key-b", "key-c"))
+        self.assertEqual(config.api_key, "key-a")
+
+    def test_public_dict_never_carries_keys(self) -> None:
+        config = CustomChatAPIConfig(
+            api_key="key-a",
+            api_keys=("key-a", "key-b"),
+            base_url="https://example.test/api",
+            model="custom-model",
+        )
+        payload = config.public_dict()
+        self.assertNotIn("api_key", payload)
+        self.assertNotIn("api_keys", payload)
+        self.assertEqual(payload["api_key_count"], 2)
+        self.assertNotIn("key-a", json.dumps(payload))
+
+    def test_exhausted_key_rolls_onto_the_next_one(self) -> None:
+        spent_client = _FakeClient()
+        spent_client.raw_response.create = Mock(side_effect=_FakeStatusError(429))
+        fresh_client = _FakeClient()
+        fresh_client.raw_response.create = Mock(return_value={"ok": True})
+        config = CustomChatAPIConfig(
+            api_key="key-a",
+            api_keys=("key-a", "key-b"),
+            base_url="https://example.test/api",
+            model="custom-model",
+        )
+        with (
+            patch("dasbench.integrations.chat_api.build_chat_client", return_value=spent_client),
+            patch("dasbench.integrations.chat_api.OpenAI", return_value=fresh_client) as make_client,
+        ):
+            result = create_chat_completion_raw(
+                config,
+                messages=[{"role": "user", "content": "hello"}],
+                response_format={"type": "json_schema"},
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(make_client.call_args.kwargs["api_key"], "key-b")
+        self.assertEqual(fresh_client.raw_response.create.call_count, 1)
+
+    def test_all_keys_exhausted_reports_the_pool_size(self) -> None:
+        spent_client = _FakeClient()
+        spent_client.raw_response.create = Mock(side_effect=_FakeStatusError(429))
+        config = CustomChatAPIConfig(
+            api_key="key-a",
+            api_keys=("key-a", "key-b"),
+            base_url="https://example.test/api",
+            model="custom-model",
+        )
+        with (
+            patch("dasbench.integrations.chat_api.build_chat_client", return_value=spent_client),
+            patch("dasbench.integrations.chat_api.OpenAI", return_value=spent_client),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "All 2 pooled chat API keys"):
+                create_chat_completion_raw(
+                    config,
+                    messages=[{"role": "user", "content": "hello"}],
+                    response_format={"type": "json_schema"},
+                )
+
+    def test_spent_state_from_an_earlier_budget_day_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = os.path.join(tmp, "spent.txt")
+            config = CustomChatAPIConfig(
+                api_key="key-a",
+                api_keys=("key-a", "key-b"),
+                base_url="https://example.test/api",
+                model="custom-model",
+            )
+            with patch.dict(os.environ, {CUSTOM_KEY_STATE_FILE_ENV_VAR: state}, clear=False):
+                _mark_key_spent("key-a")
+                self.assertEqual(_rotation_order(config), ["key-b"])
+                # Rewrite the stamp as yesterday: the budget has since reset.
+                lines = open(state, encoding="utf-8").read().splitlines()
+                lines[0] = "1999-01-01"
+                open(state, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+                self.assertEqual(_rotation_order(config), ["key-a", "key-b"])
+
+    def test_exhausting_every_key_waits_for_the_reset_instead_of_failing(self) -> None:
+        spent_client = _FakeClient()
+        spent_client.raw_response.create = Mock(
+            side_effect=[_FakeStatusError(429), _FakeStatusError(429), {"ok": True}]
+        )
+        config = CustomChatAPIConfig(
+            api_key="key-a",
+            api_keys=("key-a", "key-b"),
+            base_url="https://example.test/api",
+            model="custom-model",
+        )
+        env = {CUSTOM_KEY_WAIT_FOR_RESET_ENV_VAR: "1"}
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch("dasbench.integrations.chat_api.build_chat_client", return_value=spent_client),
+            patch("dasbench.integrations.chat_api.OpenAI", return_value=spent_client),
+            patch("dasbench.integrations.chat_api.time.sleep") as sleep,
+        ):
+            result = create_chat_completion_raw(
+                config,
+                messages=[{"role": "user", "content": "hello"}],
+                response_format={"type": "json_schema"},
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(sleep.call_count, 1)  # slept once, then succeeded
+
+    def test_single_key_quota_error_still_surfaces_unchanged(self) -> None:
+        fake_client = _FakeClient()
+        fake_client.raw_response.create = Mock(side_effect=_FakeStatusError(429))
+        config = CustomChatAPIConfig(
+            api_key="only-key",
+            base_url="https://example.test/api",
+            model="custom-model",
+        )
+        with patch("dasbench.integrations.chat_api.build_chat_client", return_value=fake_client):
+            with self.assertRaises(_FakeStatusError):
+                create_chat_completion_raw(
+                    config,
+                    messages=[{"role": "user", "content": "hello"}],
+                    response_format={"type": "json_schema"},
+                )
 
 
 if __name__ == "__main__":
