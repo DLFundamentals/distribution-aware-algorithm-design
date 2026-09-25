@@ -6,6 +6,9 @@ from unittest.mock import patch
 from dasbench.eval.evaluator import evaluate_solver
 from dasbench.integrations.gurobi_baseline import GurobiBaselineConfig, build_gurobi_solver
 from dasbench.problems import get_problem_definition
+import pytest
+
+pytestmark = pytest.mark.gurobi
 
 
 class GurobiBaselineTests(unittest.TestCase):

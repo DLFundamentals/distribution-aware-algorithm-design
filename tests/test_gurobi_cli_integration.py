@@ -8,6 +8,9 @@ from pathlib import Path
 
 from dasbench.cli import cmd_report, cmd_run_agent
 from dasbench.data import BenchmarkSpec, generate_dataset
+import pytest
+
+pytestmark = pytest.mark.gurobi
 
 
 class GurobiCliIntegrationTests(unittest.TestCase):

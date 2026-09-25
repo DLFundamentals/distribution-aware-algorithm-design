@@ -5,6 +5,8 @@ import unittest
 import json
 from pathlib import Path
 
+import pytest
+
 from dasbench.agents.template import run_template_synthesis_loop
 from dasbench.artifacts import default_agent_run_dir, default_dataset_dir, default_report_dir
 from dasbench.data import BenchmarkSpec, generate_dataset
@@ -27,6 +29,11 @@ class TemplateSmokeTests(unittest.TestCase):
             split_sizes={"train": 4, "validation": 2, "test": 2},
         )
 
+    # Synthesizes and reports on all seven problem classes, and the report runs
+    # the Gurobi and exact baselines at their full time limits. Roughly 75 minutes,
+    # which is the whole suite's runtime; everything else finishes in about one.
+    @pytest.mark.slow
+    @pytest.mark.gurobi
     def test_template_synthesis_smoke_runs_for_each_problem(self) -> None:
         cases = [
             ("coloring", "cluster_ring_mix_v1"),
