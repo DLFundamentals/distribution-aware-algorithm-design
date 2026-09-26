@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import re
 import shutil
 import statistics
@@ -31,7 +32,15 @@ RUN_SOURCES = {
     "pace2025_dominating_set": Path("artifacts/pace2025_dominating_set"),
 }
 
-PAPER_ARXIV_URL = "https://arxiv.org/abs/2605.14141"
+# The paper identifier is not hardcoded: it names the non-anonymous preprint,
+# and this script writes it into every generated export. Set
+# DASBENCH_PAPER_REFERENCE to include it; unset, the exports omit it.
+PAPER_REFERENCE_ENV_VAR = "DASBENCH_PAPER_REFERENCE"
+
+
+def paper_reference() -> str | None:
+    value = os.environ.get(PAPER_REFERENCE_ENV_VAR, "").strip()
+    return value or None
 
 PAPER_HEADLINE_ROWS = {
     "coloring": {
@@ -980,10 +989,15 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     candidate_output_dir: Path = args.candidate_output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     candidate_output_dir.mkdir(parents=True, exist_ok=True)
+    reference = paper_reference()
     manifest: dict[str, Any] = {
         "paper": {
-            "arxiv_url": PAPER_ARXIV_URL,
-            "note": "Cross-reference constants were transcribed from arXiv source for tables in arXiv:2605.14141.",
+            "reference": reference,
+            "note": (
+                "Cross-reference constants were transcribed from the paper's tables."
+                if reference is None
+                else f"Cross-reference constants were transcribed from the tables in {reference}."
+            ),
         },
         "sources": {key: str(path) for key, path in RUN_SOURCES.items()},
         "outputs": {},
@@ -1151,7 +1165,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         "headline": PAPER_HEADLINE_ROWS,
         "pace": PAPER_PACE_ROWS,
         "graph_relabel_invariance": PAPER_RELABEL_BY_PROBLEM,
-        "source": PAPER_ARXIV_URL,
+        "source": paper_reference(),
     })
     write_report(
         output_dir,
@@ -1236,7 +1250,11 @@ def write_report(
     lines = [
         "# Collected Experiment Results",
         "",
-        f"- Paper cross-reference source: [{PAPER_ARXIV_URL}]({PAPER_ARXIV_URL})",
+        (
+            "- Paper cross-reference source: the paper's own tables"
+            if paper_reference() is None
+            else f"- Paper cross-reference source: {paper_reference()}"
+        ),
         f"- Output directory: `{output_dir}`",
         "",
         "## Selected Artifact Runs",
